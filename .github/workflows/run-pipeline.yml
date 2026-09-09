@@ -21,7 +21,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           # || true keeps the closing code fence from being skipped by the default "set -eo pipefail" if pytest fails
-          output=$(pytest --cov=cvbot_embedder --cov-report=term-missing 2>&1) || true
+          output=$(pytest --cov=cvbot_retriever --cov-report=term-missing 2>&1) || true
           {
             echo '### Pytest Results'
             echo
