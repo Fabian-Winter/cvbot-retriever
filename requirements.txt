@@ -1,2 +1,7 @@
+langchain-core
+langchain-aws
+langchain-chroma
+chromadb==1.5.9
+boto3
 pytest
 pytest-cov
