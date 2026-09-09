@@ -1,0 +1,31 @@
+name: Run retrieval pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          # || true keeps the closing code fence from being skipped by the default "set -eo pipefail" if pytest fails
+          output=$(pytest --cov=cvbot_embedder --cov-report=term-missing 2>&1) || true
+          {
+            echo '### Pytest Results'
+            echo
+            echo '```'
+            echo "$output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
