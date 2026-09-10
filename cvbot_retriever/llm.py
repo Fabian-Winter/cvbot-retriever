@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import boto3
 
 from .config import Settings
+from .conversation import ROLE_USER, Message
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,9 +18,8 @@ class BedrockLLMClient:
     """Generates text with a Bedrock model through the Converse API.
 
     The client knows nothing about prompt construction: it receives a finished
-    prompt and passes it on unchanged. Later iterations can therefore add a
-    system prompt, retrieved context and conversation history without touching
-    this class.
+    message list and passes it on unchanged. System prompt, retrieved context
+    and truncation of the history are handled by the calling pipeline.
     """
 
     def __init__(self, settings: Settings, client: Any | None = None) -> None:
@@ -43,34 +44,39 @@ class BedrockLLMClient:
             settings.aws_region,
         )
 
-    def generate(self, prompt: str, system: str | None = None) -> str:
-        """Sends a prompt to the model and returns its answer.
+    def generate(self, messages: Sequence[Message], system: str) -> str:
+        """Sends a conversation to the model and returns its answer.
 
         Args:
-            prompt: The finished user prompt.
-            system: Optional system prompt sent as a separate Converse block so
-                that the model can tell it apart from the user input.
+            messages: The turns of the conversation in chronological order,
+                ending with the current user message.
+            system: The system prompt, sent as a separate Converse block so
+                that the model can tell it apart from the user input. It is
+                mandatory: without it the persona and the injection guardrails
+                would silently be missing.
 
         Returns:
             The generated text.
 
         Raises:
-            ValueError: If the prompt is empty.
+            ValueError: If the system prompt is empty, if no message is given
+                or if the last one is not a user turn.
         """
-        if not prompt.strip():
-            raise ValueError("prompt must not be empty")
+        if not system.strip():
+            raise ValueError("system prompt must not be empty")
+        if not messages:
+            raise ValueError("messages must not be empty")
+        if messages[-1].role != ROLE_USER:
+            raise ValueError("the last message must be a user message")
 
         request: dict[str, Any] = {
             "modelId": self._model_id,
-            "messages": [{"role": "user", "content": [{"text": prompt}]}],
+            "messages": [message.to_converse() for message in messages],
+            "system": [{"text": system}],
         }
-        if system:
-            request["system"] = [{"text": system}]
 
         LOGGER.debug(
-            "invoking %s with %d prompt character(s)",
-            self._model_id,
-            len(prompt),
+            "invoking %s with %d message(s)", self._model_id, len(messages)
         )
         response = self._client.converse(**request)
         return _extract_text(response)

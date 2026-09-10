@@ -13,6 +13,8 @@ DEFAULT_AWS_REGION = "eu-central-1"
 DEFAULT_EMBEDDING_MODEL_ID = "amazon.titan-embed-text-v2:0"
 DEFAULT_LLM_MODEL_ID = "amazon.nova-lite-v1:0"
 DEFAULT_TOP_K = 4
+DEFAULT_MAX_CONTEXT_TOKENS = 8000
+DEFAULT_RESPONSE_TOKEN_BUFFER = 1024
 DEFAULT_LOG_LEVEL = "INFO"
 
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
@@ -34,6 +36,10 @@ class Settings:
         embedding_model_id: Bedrock model ID used to embed the question.
         llm_model_id: Bedrock model ID used to generate the answer.
         top_k: Number of chunks retrieved per question.
+        max_context_tokens: Upper bound for the whole context sent to the LLM
+            (system prompt, retrieved chunks and conversation history).
+        response_token_buffer: Part of ``max_context_tokens`` that is kept free
+            for the answer of the model.
         log_level: Verbosity of the log output.
     """
 
@@ -44,6 +50,8 @@ class Settings:
     embedding_model_id: str = DEFAULT_EMBEDDING_MODEL_ID
     llm_model_id: str = DEFAULT_LLM_MODEL_ID
     top_k: int = DEFAULT_TOP_K
+    max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
+    response_token_buffer: int = DEFAULT_RESPONSE_TOKEN_BUFFER
     log_level: str = DEFAULT_LOG_LEVEL
 
     def __post_init__(self) -> None:
@@ -66,6 +74,20 @@ class Settings:
             raise ValueError("llm_model_id must not be empty")
         if self.top_k < 1:
             raise ValueError(f"top_k must be positive: {self.top_k}")
+        if self.max_context_tokens < 1:
+            raise ValueError(
+                f"max_context_tokens must be positive: {self.max_context_tokens}"
+            )
+        if self.response_token_buffer < 1:
+            raise ValueError(
+                "response_token_buffer must be positive: "
+                f"{self.response_token_buffer}"
+            )
+        if self.response_token_buffer >= self.max_context_tokens:
+            raise ValueError(
+                "response_token_buffer must be smaller than max_context_tokens: "
+                f"{self.response_token_buffer} >= {self.max_context_tokens}"
+            )
         if self.log_level not in _VALID_LOG_LEVELS:
             raise ValueError(f"unknown log_level: {self.log_level}")
 
@@ -98,6 +120,12 @@ class Settings:
             ),
             llm_model_id=source.get("LLM_MODEL_ID", DEFAULT_LLM_MODEL_ID),
             top_k=_int(source, "TOP_K", DEFAULT_TOP_K),
+            max_context_tokens=_int(
+                source, "MAX_CONTEXT_TOKENS", DEFAULT_MAX_CONTEXT_TOKENS
+            ),
+            response_token_buffer=_int(
+                source, "RESPONSE_TOKEN_BUFFER", DEFAULT_RESPONSE_TOKEN_BUFFER
+            ),
             log_level=source.get("LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
         )
 

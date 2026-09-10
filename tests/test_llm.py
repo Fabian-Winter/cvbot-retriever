@@ -6,7 +6,11 @@ import pytest
 
 from cvbot_retriever import llm
 from cvbot_retriever.config import Settings
+from cvbot_retriever.conversation import Message
 from tests.conftest import FakeBedrockRuntime
+
+QUESTION = Message(role="user", content="What did the candidate study?")
+SYSTEM = "You are an assistant."
 
 
 def test_creates_bedrock_runtime_client_for_the_region(
@@ -27,11 +31,11 @@ def test_creates_bedrock_runtime_client_for_the_region(
     assert captured["region_name"] == "eu-west-1"
 
 
-def test_generate_sends_prompt_as_user_message(settings: Settings) -> None:
+def test_generate_sends_the_messages_as_user_turn(settings: Settings) -> None:
     runtime = FakeBedrockRuntime(["The candidate studied computer science."])
     client = llm.BedrockLLMClient(settings, client=runtime)
 
-    answer = client.generate("What did the candidate study?")
+    answer = client.generate([QUESTION], SYSTEM)
 
     [request] = runtime.calls
     assert request["modelId"] == "test.model-v1:0"
@@ -41,34 +45,69 @@ def test_generate_sends_prompt_as_user_message(settings: Settings) -> None:
     assert answer == "The candidate studied computer science."
 
 
-def test_generate_omits_system_block_when_not_given(settings: Settings) -> None:
+def test_generate_keeps_the_roles_of_a_history(settings: Settings) -> None:
     runtime = FakeBedrockRuntime()
     client = llm.BedrockLLMClient(settings, client=runtime)
+    history = [
+        Message(role="user", content="Erste Frage?"),
+        Message(role="assistant", content="Erste Antwort."),
+        QUESTION,
+    ]
 
-    client.generate("A question.")
+    client.generate(history, SYSTEM)
 
-    assert "system" not in runtime.calls[0]
+    assert [message["role"] for message in runtime.calls[0]["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+    ]
 
 
 def test_generate_passes_system_prompt_separately(settings: Settings) -> None:
     runtime = FakeBedrockRuntime()
     client = llm.BedrockLLMClient(settings, client=runtime)
 
-    client.generate("A question.", system="You are an assistant.")
+    client.generate([QUESTION], SYSTEM)
 
-    assert runtime.calls[0]["system"] == [{"text": "You are an assistant."}]
+    assert runtime.calls[0]["system"] == [{"text": SYSTEM}]
+    assert all(
+        SYSTEM not in block["text"]
+        for message in runtime.calls[0]["messages"]
+        for block in message["content"]
+    )
 
 
 def test_generate_joins_multiple_text_blocks(settings: Settings) -> None:
     runtime = FakeBedrockRuntime(["First part.", "Second part."])
     client = llm.BedrockLLMClient(settings, client=runtime)
 
-    assert client.generate("A question.") == "First part.\nSecond part."
+    assert client.generate([QUESTION], SYSTEM) == "First part.\nSecond part."
 
 
-@pytest.mark.parametrize("prompt", ["", "   "])
-def test_empty_prompt_raises(settings: Settings, prompt: str) -> None:
+@pytest.mark.parametrize("system", ["", "   "])
+def test_empty_system_prompt_raises(settings: Settings, system: str) -> None:
     client = llm.BedrockLLMClient(settings, client=FakeBedrockRuntime())
 
-    with pytest.raises(ValueError, match="prompt"):
-        client.generate(prompt)
+    with pytest.raises(ValueError, match="system prompt"):
+        client.generate([QUESTION], system)
+
+
+def test_missing_system_prompt_raises(settings: Settings) -> None:
+    client = llm.BedrockLLMClient(settings, client=FakeBedrockRuntime())
+
+    with pytest.raises(TypeError):
+        client.generate([QUESTION])  # type: ignore[call-arg]
+
+
+def test_empty_message_list_raises(settings: Settings) -> None:
+    client = llm.BedrockLLMClient(settings, client=FakeBedrockRuntime())
+
+    with pytest.raises(ValueError, match="messages"):
+        client.generate([], SYSTEM)
+
+
+def test_last_message_must_be_a_user_message(settings: Settings) -> None:
+    client = llm.BedrockLLMClient(settings, client=FakeBedrockRuntime())
+
+    with pytest.raises(ValueError, match="user message"):
+        client.generate([Message(role="assistant", content="Eine Antwort.")], SYSTEM)

@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import uuid
 
 from .config import Settings
-from .pipeline import answer_question
+from .pipeline import ConversationEngine
 
 LOGGER = logging.getLogger("cvbot_retriever")
 
@@ -59,7 +60,8 @@ def main(argv: list[str] | None = None) -> int:
             level=settings.log_level,
             format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         )
-        result = answer_question(settings, args.question)
+        engine = ConversationEngine(settings)
+        result = engine.answer(str(uuid.uuid4()), args.question)
     except Exception:
         LOGGER.exception("answering failed")
         return 1

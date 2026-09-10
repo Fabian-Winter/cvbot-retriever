@@ -2,7 +2,8 @@
 
 Retrieval and generation for a RAG chatbot: it embeds a question with AWS
 Bedrock, looks up the matching document chunks in the ChromaDB filled by
-cvbot-embedder and lets a Bedrock LLM generate an answer from them.
+cvbot-embedder and lets a Bedrock LLM generate an answer from them - across
+several turns of a conversation.
 
 ## How it works
 
@@ -10,11 +11,36 @@ cvbot-embedder and lets a Bedrock LLM generate an answer from them.
    were indexed with.
 2. **Retrieve** – the `TOP_K` nearest chunks are read from the ChromaDB
    collection, including their metadata (`source`, `filename`, `chunk_index`).
-3. **Generate** – question and chunks are combined into a prompt and sent to
-   the Bedrock LLM through the Converse API.
+3. **Build the context** – chunks and question become the current user message;
+   together with the system prompt and as much of the history as fits into
+   `MAX_CONTEXT_TOKENS` minus `RESPONSE_TOKEN_BUFFER` they form the context.
+4. **Generate** – the context is sent to the Bedrock LLM through the Converse
+   API, with the system prompt in its own block.
 
 The collection is only read; creating and filling it stays the responsibility
 of cvbot-embedder.
+
+## Conversations and context
+
+The full history and the context sent to the model are managed separately:
+
+- A `Conversation` holds every turn unchanged and lives in a
+  `ConversationStore` (in-memory for now, a shared backend can be added later).
+  This is what a UI displays.
+- `build_context` derives a **new**, possibly shorter message list from it. If
+  the budget is exceeded, the oldest history messages are dropped one by one;
+  the current question is always kept and the system prompt is never part of
+  the truncatable list, because it is sent in its own Converse block.
+- Tokens are counted with the `cl100k_base` encoding, the same approximation
+  cvbot-embedder uses for chunking.
+- If the system prompt and the current question alone exceed the budget, the
+  call fails instead of silently sending a degraded context.
+
+The system prompt defines the persona (friendly, professional, answers in the
+language of the question), forbids inventing facts and contains explicit
+prompt-injection guardrails. Retrieved chunks and the question are wrapped in
+delimiters and marked as data, and delimiter-like text inside them is
+neutralized.
 
 ## Setup
 
@@ -42,6 +68,8 @@ usually only `CHROMA_HOST` needs to be set.
 | `EMBEDDING_MODEL_ID` | `amazon.titan-embed-text-v2:0` | Bedrock model ID for the question |
 | `LLM_MODEL_ID` | `amazon.nova-lite-v1:0` | Bedrock model ID for the answer |
 | `TOP_K` | `4` | Number of chunks retrieved per question |
+| `MAX_CONTEXT_TOKENS` | `8000` | Upper bound for the whole context sent to the LLM |
+| `RESPONSE_TOKEN_BUFFER` | `1024` | Part of the budget kept free for the answer |
 | `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 
 `CHROMA_COLLECTION` and `EMBEDDING_MODEL_ID` must match the values used by
@@ -52,11 +80,18 @@ ones.
 
 ```python
 from cvbot_retriever.config import Settings
-from cvbot_retriever.pipeline import answer_question
+from cvbot_retriever.pipeline import ConversationEngine
 
-result = answer_question(Settings.from_env(), "Which projects has the candidate worked on?")
-print(result.answer)
+engine = ConversationEngine(Settings.from_env())
+print(engine.answer("conversation-1", "Which projects has the candidate worked on?").answer)
+print(engine.answer("conversation-1", "And which technologies were involved?").answer)
+
+for message in engine.store.load("conversation-1").history():
+    print(message.role, message.content)
 ```
+
+`answer_question(settings, question)` remains available for a single question
+without history.
 
 For a quick smoke test against a running ChromaDB:
 
@@ -65,6 +100,9 @@ python -m cvbot_retriever "Which projects has the candidate worked on?" \
   --top-k 6 \
   --log-level DEBUG
 ```
+
+The command line answers a single question; conversations with several turns
+are driven through `ConversationEngine`.
 
 ## Tests
 
@@ -84,17 +122,22 @@ cvbot_retriever/
   embeddings.py    Bedrock embedding model for the question
   vector_store.py  Read-only ChromaDB client and collection
   retriever.py     Top-k chunk lookup
+  prompts.py       System prompt and user message construction
+  conversation.py  Messages, full history and conversation store
+  tokens.py        Token counting for the context budget
+  context.py       Truncation of the history to the token budget
   llm.py           Bedrock Converse client for the generation
-  pipeline.py      Orchestration of retrieval and generation
+  pipeline.py      Orchestration of retrieval, context and generation
   __main__.py      Command line
 ```
 
 ## Known limitations
 
-- One question per call: there is no conversation history and no context
-  truncation yet.
-- `build_prompt` only concatenates chunks and question; persona, grounding
-  rules and prompt injection defenses are still missing.
+- Conversations are only kept in memory: they are lost when the process ends
+  and are not shared between several application instances.
+- Truncation drops whole messages; there is no summarization of older turns.
+- Token counting uses `cl100k_base` as an approximation of the Bedrock
+  tokenizers, so the real usage can differ slightly.
 - Errors from Bedrock or ChromaDB propagate unchanged; there is no retry or
   user-facing error handling yet.
 

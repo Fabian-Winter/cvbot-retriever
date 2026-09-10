@@ -10,6 +10,8 @@ from cvbot_retriever.config import (
     DEFAULT_EMBEDDING_MODEL_ID,
     DEFAULT_LLM_MODEL_ID,
     DEFAULT_LOG_LEVEL,
+    DEFAULT_MAX_CONTEXT_TOKENS,
+    DEFAULT_RESPONSE_TOKEN_BUFFER,
     DEFAULT_TOP_K,
     Settings,
 )
@@ -23,6 +25,8 @@ def test_from_env_uses_defaults_when_unset() -> None:
     assert settings.embedding_model_id == DEFAULT_EMBEDDING_MODEL_ID
     assert settings.llm_model_id == DEFAULT_LLM_MODEL_ID
     assert settings.top_k == DEFAULT_TOP_K
+    assert settings.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
+    assert settings.response_token_buffer == DEFAULT_RESPONSE_TOKEN_BUFFER
     assert settings.log_level == DEFAULT_LOG_LEVEL
 
 
@@ -43,6 +47,8 @@ def test_from_env_reads_all_values() -> None:
             "EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v1",
             "LLM_MODEL_ID": "amazon.nova-pro-v1:0",
             "TOP_K": "8",
+            "MAX_CONTEXT_TOKENS": "4000",
+            "RESPONSE_TOKEN_BUFFER": "500",
             "LOG_LEVEL": "debug",
         }
     )
@@ -54,6 +60,8 @@ def test_from_env_reads_all_values() -> None:
     assert settings.embedding_model_id == "amazon.titan-embed-text-v1"
     assert settings.llm_model_id == "amazon.nova-pro-v1:0"
     assert settings.top_k == 8
+    assert settings.max_context_tokens == 4000
+    assert settings.response_token_buffer == 500
     assert settings.log_level == "DEBUG"
 
 
@@ -73,6 +81,18 @@ def test_non_numeric_port_raises() -> None:
         Settings.from_env(env={"CHROMA_PORT": "eight"})
 
 
+def test_non_numeric_max_context_tokens_raises() -> None:
+    with pytest.raises(ValueError, match="MAX_CONTEXT_TOKENS"):
+        Settings.from_env(env={"MAX_CONTEXT_TOKENS": "many"})
+
+
+def test_response_buffer_must_leave_room_for_the_context() -> None:
+    with pytest.raises(ValueError, match="response_token_buffer"):
+        Settings.from_env(
+            env={"MAX_CONTEXT_TOKENS": "1000", "RESPONSE_TOKEN_BUFFER": "1000"}
+        )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -84,6 +104,9 @@ def test_non_numeric_port_raises() -> None:
         {"embedding_model_id": ""},
         {"llm_model_id": ""},
         {"top_k": 0},
+        {"max_context_tokens": 0},
+        {"response_token_buffer": 0},
+        {"max_context_tokens": 100, "response_token_buffer": 200},
         {"log_level": "TRACE"},
     ],
 )

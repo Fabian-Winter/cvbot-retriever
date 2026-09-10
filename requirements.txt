@@ -3,5 +3,6 @@ langchain-aws
 langchain-chroma
 chromadb==1.5.9
 boto3
+tiktoken
 pytest
 pytest-cov
