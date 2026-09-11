@@ -441,7 +441,7 @@ def test_the_privacy_notice_is_shown(client: TestClient) -> None:
     page = client.get(f"/c/{new_id()}")
 
     assert "Datenschutzhinweis" in page.text
-    assert "Amazon Bedrock" in page.text
+    assert "AWS" in page.text
     assert "Arbeitsspeicher" in page.text
 
 
