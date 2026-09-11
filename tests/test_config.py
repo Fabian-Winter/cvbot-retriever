@@ -13,6 +13,8 @@ from cvbot_retriever.config import (
     DEFAULT_MAX_CONTEXT_TOKENS,
     DEFAULT_RESPONSE_TOKEN_BUFFER,
     DEFAULT_TOP_K,
+    DEFAULT_WEB_HOST,
+    DEFAULT_WEB_PORT,
     Settings,
 )
 
@@ -27,6 +29,8 @@ def test_from_env_uses_defaults_when_unset() -> None:
     assert settings.top_k == DEFAULT_TOP_K
     assert settings.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
     assert settings.response_token_buffer == DEFAULT_RESPONSE_TOKEN_BUFFER
+    assert settings.web_host == DEFAULT_WEB_HOST
+    assert settings.web_port == DEFAULT_WEB_PORT
     assert settings.log_level == DEFAULT_LOG_LEVEL
 
 
@@ -49,6 +53,8 @@ def test_from_env_reads_all_values() -> None:
             "TOP_K": "8",
             "MAX_CONTEXT_TOKENS": "4000",
             "RESPONSE_TOKEN_BUFFER": "500",
+            "WEB_HOST": "0.0.0.0",
+            "WEB_PORT": "9000",
             "LOG_LEVEL": "debug",
         }
     )
@@ -62,6 +68,8 @@ def test_from_env_reads_all_values() -> None:
     assert settings.top_k == 8
     assert settings.max_context_tokens == 4000
     assert settings.response_token_buffer == 500
+    assert settings.web_host == "0.0.0.0"
+    assert settings.web_port == 9000
     assert settings.log_level == "DEBUG"
 
 
@@ -86,6 +94,11 @@ def test_non_numeric_max_context_tokens_raises() -> None:
         Settings.from_env(env={"MAX_CONTEXT_TOKENS": "many"})
 
 
+def test_non_numeric_web_port_raises() -> None:
+    with pytest.raises(ValueError, match="WEB_PORT"):
+        Settings.from_env(env={"WEB_PORT": "eighty"})
+
+
 def test_response_buffer_must_leave_room_for_the_context() -> None:
     with pytest.raises(ValueError, match="response_token_buffer"):
         Settings.from_env(
@@ -107,6 +120,9 @@ def test_response_buffer_must_leave_room_for_the_context() -> None:
         {"max_context_tokens": 0},
         {"response_token_buffer": 0},
         {"max_context_tokens": 100, "response_token_buffer": 200},
+        {"web_host": ""},
+        {"web_port": 0},
+        {"web_port": 70000},
         {"log_level": "TRACE"},
     ],
 )

@@ -15,6 +15,8 @@ DEFAULT_LLM_MODEL_ID = "amazon.nova-lite-v1:0"
 DEFAULT_TOP_K = 4
 DEFAULT_MAX_CONTEXT_TOKENS = 8000
 DEFAULT_RESPONSE_TOKEN_BUFFER = 1024
+DEFAULT_WEB_HOST = "127.0.0.1"
+DEFAULT_WEB_PORT = 8080
 DEFAULT_LOG_LEVEL = "INFO"
 
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
@@ -40,6 +42,8 @@ class Settings:
             (system prompt, retrieved chunks and conversation history).
         response_token_buffer: Part of ``max_context_tokens`` that is kept free
             for the answer of the model.
+        web_host: Interface the web application binds to.
+        web_port: Port the web application listens on.
         log_level: Verbosity of the log output.
     """
 
@@ -52,6 +56,8 @@ class Settings:
     top_k: int = DEFAULT_TOP_K
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     response_token_buffer: int = DEFAULT_RESPONSE_TOKEN_BUFFER
+    web_host: str = DEFAULT_WEB_HOST
+    web_port: int = DEFAULT_WEB_PORT
     log_level: str = DEFAULT_LOG_LEVEL
 
     def __post_init__(self) -> None:
@@ -88,6 +94,10 @@ class Settings:
                 "response_token_buffer must be smaller than max_context_tokens: "
                 f"{self.response_token_buffer} >= {self.max_context_tokens}"
             )
+        if not self.web_host:
+            raise ValueError("web_host must not be empty")
+        if not 1 <= self.web_port <= 65535:
+            raise ValueError(f"web_port outside 1-65535: {self.web_port}")
         if self.log_level not in _VALID_LOG_LEVELS:
             raise ValueError(f"unknown log_level: {self.log_level}")
 
@@ -126,6 +136,8 @@ class Settings:
             response_token_buffer=_int(
                 source, "RESPONSE_TOKEN_BUFFER", DEFAULT_RESPONSE_TOKEN_BUFFER
             ),
+            web_host=source.get("WEB_HOST", DEFAULT_WEB_HOST),
+            web_port=_int(source, "WEB_PORT", DEFAULT_WEB_PORT),
             log_level=source.get("LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
         )
 

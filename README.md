@@ -70,6 +70,8 @@ usually only `CHROMA_HOST` needs to be set.
 | `TOP_K` | `4` | Number of chunks retrieved per question |
 | `MAX_CONTEXT_TOKENS` | `8000` | Upper bound for the whole context sent to the LLM |
 | `RESPONSE_TOKEN_BUFFER` | `1024` | Part of the budget kept free for the answer |
+| `WEB_HOST` | `127.0.0.1` | Interface the web application binds to |
+| `WEB_PORT` | `8080` | Port the web application listens on |
 | `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 
 `CHROMA_COLLECTION` and `EMBEDDING_MODEL_ID` must match the values used by
@@ -104,6 +106,62 @@ python -m cvbot_retriever "Which projects has the candidate worked on?" \
 The command line answers a single question; conversations with several turns
 are driven through `ConversationEngine`.
 
+## Web application
+
+The chat UI and the JSON API share the same engine and the same conversation
+store:
+
+```bash
+python -m cvbot_retriever --serve --host 127.0.0.1 --port 8080
+```
+
+Opening `/` creates a conversation and redirects to `/c/<uuid4>`, which renders
+the full visible history plus a privacy notice. Only user and assistant turns
+are rendered - the system prompt and the retrieved chunks never leave the
+process. The page sends questions to the JSON API and therefore needs no build
+step.
+
+The engine is built on the first question, not at startup, so the application
+comes up while ChromaDB is still unavailable and retries on the next request.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/` | Redirects to a new conversation |
+| `GET` | `/c/{conversation_id}` | Chat UI of one conversation |
+| `POST` | `/api/conversations` | Hands out a new conversation ID |
+| `GET` | `/api/conversations/{id}` | Visible history of a conversation |
+| `POST` | `/api/conversations/{id}/messages` | Asks a question |
+| `GET` | `/healthz` | Liveness, without touching the backends |
+
+```bash
+CID=$(curl -s -X POST localhost:8080/api/conversations | jq -r .conversation_id)
+curl -s -X POST "localhost:8080/api/conversations/$CID/messages" \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "Which projects has the candidate worked on?"}'
+```
+
+```json
+{
+  "conversation_id": "7c1f...",
+  "answer": "...",
+  "messages": [
+    {"role": "user", "content": "Which projects has the candidate worked on?"},
+    {"role": "assistant", "content": "..."}
+  ]
+}
+```
+
+Conversation IDs must be UUID4 so that foreign conversations cannot be guessed
+through the URL. Failures are answered with `{"detail": "..."}` and a status
+code - `400` for an unusable question or ID, `503` when ChromaDB or Bedrock do
+not answer, `500` otherwise. The message is meant to be shown to the user as-is;
+the underlying exception is only written to the log.
+
+The application is served by a single task instance, so the process-local
+`InMemoryConversationStore` is enough to keep concurrent conversations apart.
+Turns of one conversation are serialized, different conversations run
+concurrently.
+
 ## Tests
 
 ```bash
@@ -128,7 +186,10 @@ cvbot_retriever/
   context.py       Truncation of the history to the token budget
   llm.py           Bedrock Converse client for the generation
   pipeline.py      Orchestration of retrieval, context and generation
-  __main__.py      Command line
+  schemas.py       Request and response models of the JSON API
+  webapp.py        Chat UI and JSON API
+  templates/       Jinja2 template of the chat page
+  __main__.py      Command line and server start
 ```
 
 ## Known limitations
@@ -138,6 +199,9 @@ cvbot_retriever/
 - Truncation drops whole messages; there is no summarization of older turns.
 - Token counting uses `cl100k_base` as an approximation of the Bedrock
   tokenizers, so the real usage can differ slightly.
-- Errors from Bedrock or ChromaDB propagate unchanged; there is no retry or
-  user-facing error handling yet.
+- The web layer turns Bedrock and ChromaDB failures into a friendly message,
+  but does not retry a failed turn; the library itself still propagates them
+  unchanged.
+- The JSON API has neither rate limiting nor an explicit CORS policy, and
+  conversations have no expiry.
 

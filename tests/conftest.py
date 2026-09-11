@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 from cvbot_retriever.config import Settings
+from cvbot_retriever.conversation import ConversationStore
+from cvbot_retriever.pipeline import AnswerResult
 
 
 class FakeEmbeddings(Embeddings):
@@ -121,6 +123,64 @@ class FakeBedrockRuntime:
                 }
             }
         }
+
+
+class FakeEngine:
+    """Conversation engine double that answers without AWS or ChromaDB.
+
+    Writes both turns into the injected store exactly like the real engine, so
+    that callers reading the store see the same history.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        store: ConversationStore,
+        responder: Callable[[str], str] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        """Initializes the engine.
+
+        Args:
+            settings: Runtime configuration.
+            store: Storage the turns are written to.
+            responder: Maps a question onto the answer; defaults to a constant.
+            error: Raised by every call instead of answering.
+        """
+        self.settings = settings
+        self.store = store
+        self.calls: list[tuple[str, str]] = []
+        self._responder = responder or (lambda question: "A fake answer.")
+        self._error = error
+
+    def answer(self, conversation_id: str, question: str) -> AnswerResult:
+        """Answers a question as the next turn of a conversation.
+
+        Args:
+            conversation_id: Identifier of the conversation.
+            question: The user question.
+
+        Returns:
+            The generated answer.
+
+        Raises:
+            Exception: The configured error, if one is set.
+        """
+        self.calls.append((conversation_id, question))
+        if self._error is not None:
+            raise self._error
+
+        conversation = self.store.load(conversation_id)
+        answer = self._responder(question)
+        conversation.add_user(question)
+        conversation.add_assistant(answer)
+        self.store.save(conversation)
+        return AnswerResult(
+            question=question,
+            answer=answer,
+            chunks=[],
+            conversation_id=conversation_id,
+        )
 
 
 @pytest.fixture

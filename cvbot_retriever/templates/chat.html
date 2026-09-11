@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>cvbot</title>
+<style>
+  :root {
+    --bg: #f7f7f8;
+    --surface: #ffffff;
+    --border: #e3e3e8;
+    --text: #1f2023;
+    --muted: #6b6d76;
+    --accent: #2f5bea;
+    --error: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+  main {
+    width: min(760px, 100%);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-inline: 1px solid var(--border);
+  }
+  header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: .2px; }
+  header p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+  #log {
+    flex: 1;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+  }
+  .msg {
+    max-width: 82%;
+    padding: 11px 15px;
+    border-radius: 14px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .msg.error {
+    align-self: flex-start;
+    background: #fdeceb;
+    border: 1px solid #f3c7c4;
+    color: var(--error);
+  }
+  .empty { color: var(--muted); font-size: 14px; margin: auto 0; text-align: center; }
+  form {
+    display: flex;
+    gap: 10px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+  }
+  textarea {
+    flex: 1;
+    resize: none;
+    font: inherit;
+    padding: 11px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: inherit;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    font: inherit;
+    padding: 0 20px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  footer {
+    padding: 16px 24px 24px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  footer h2 { margin: 0 0 4px; font-size: 12px; color: var(--text); }
+  footer ul { margin: 0; padding-left: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>cvbot</h1>
+    <p>Fragen zum Lebenslauf, den Projekten und den Interessen des Bewerbers.</p>
+  </header>
+
+  <div id="log" role="log" aria-live="polite">
+    {% for message in messages %}
+      <div class="msg {{ message.role }}">{{ message.content }}</div>
+    {% else %}
+      <p class="empty">Stelle die erste Frage, um das Gespräch zu beginnen.</p>
+    {% endfor %}
+  </div>
+
+  <form id="chat" autocomplete="off">
+    <textarea id="question" rows="1" maxlength="2000" required
+              placeholder="Frage stellen … (Enter zum Senden)"
+              aria-label="Frage"></textarea>
+    <button type="submit" id="send">Senden</button>
+  </form>
+
+  <footer>
+    <h2>Datenschutzhinweis</h2>
+    <ul>
+      <li>Eingegebene Fragen und der Gesprächsverlauf werden zur Beantwortung an
+          Amazon Web Services (AWS) übermittelt und dort verarbeitet.</li>
+      <li>Der Gesprächsverlauf wird ausschließlich im Arbeitsspeicher dieser
+          Anwendung gehalten, nicht dauerhaft gespeichert und geht bei einem
+          Neustart verloren.</li>
+      <li>Technische Protokolle können Zeitpunkt, Konversations-ID und
+          Fehlermeldungen enthalten.</li>
+      <li>Bitte gib keine personenbezogenen oder vertraulichen Daten ein.</li>
+    </ul>
+  </footer>
+</main>
+
+<script>
+  const conversationId = {{ conversation_id | tojson }};
+  const endpoint = `/api/conversations/${conversationId}/messages`;
+  const log = document.getElementById("log");
+  const form = document.getElementById("chat");
+  const input = document.getElementById("question");
+  const send = document.getElementById("send");
+
+  function append(role, text) {
+    const empty = log.querySelector(".empty");
+    if (empty) empty.remove();
+    const node = document.createElement("div");
+    node.className = `msg ${role}`;
+    node.textContent = text;
+    log.appendChild(node);
+    log.scrollTop = log.scrollHeight;
+    return node;
+  }
+
+  async function ask(question) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body.detail || "Die Anfrage ist fehlgeschlagen.");
+    }
+    return body.answer;
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const question = input.value.trim();
+    if (!question) return;
+
+    append("user", question);
+    input.value = "";
+    input.disabled = send.disabled = true;
+    const pending = append("assistant", "…");
+
+    try {
+      pending.textContent = await ask(question);
+    } catch (error) {
+      pending.className = "msg error";
+      pending.textContent = error.message;
+    } finally {
+      input.disabled = send.disabled = false;
+      input.focus();
+      log.scrollTop = log.scrollHeight;
+    }
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  log.scrollTop = log.scrollHeight;
+  input.focus();
+</script>
+</body>
+</html>

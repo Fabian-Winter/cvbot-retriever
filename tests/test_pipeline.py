@@ -300,9 +300,26 @@ def test_cli_prints_the_answer(
     assert capsys.readouterr().out.strip() == ANSWER
 
 
-def test_cli_requires_a_question() -> None:
-    with pytest.raises(SystemExit):
-        cli.main([])
+def test_cli_requires_a_question_unless_it_serves() -> None:
+    assert cli.main([]) == 1
+
+
+def test_cli_serves_on_the_configured_interface(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
+    monkeypatch.setattr(cli.Settings, "from_env", classmethod(lambda cls: settings))
+    monkeypatch.setattr(cli, "create_app", lambda s: "app")
+    served: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli.uvicorn, "run", lambda app, **kwargs: served.update(app=app, **kwargs)
+    )
+
+    exit_code = cli.main(["--serve", "--host", "0.0.0.0", "--port", "9000"])
+
+    assert exit_code == 0
+    assert served["app"] == "app"
+    assert served["host"] == "0.0.0.0"
+    assert served["port"] == 9000
 
 
 def test_cli_reports_failures(

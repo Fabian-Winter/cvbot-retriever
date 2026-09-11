@@ -4,5 +4,9 @@ langchain-chroma
 chromadb==1.5.9
 boto3
 tiktoken
+fastapi
+uvicorn
+jinja2
+httpx
 pytest
 pytest-cov
