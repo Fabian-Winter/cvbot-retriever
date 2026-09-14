@@ -18,8 +18,17 @@ DEFAULT_RESPONSE_TOKEN_BUFFER = 1024
 DEFAULT_WEB_HOST = "127.0.0.1"
 DEFAULT_WEB_PORT = 8080
 DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_RATE_LIMIT_PER_MINUTE = 10
+DEFAULT_RATE_LIMIT_PER_HOUR = 60
+DEFAULT_TRUST_FORWARDED_FOR = True
+DEFAULT_CORS_ALLOWED_ORIGINS: tuple[str, ...] = ()
+DEFAULT_CONVERSATION_TTL_SECONDS = 1800
+DEFAULT_MAX_CONVERSATIONS = 50
 
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+_ORIGIN_SCHEMES = ("http://", "https://")
 
 
 @dataclass(frozen=True)
@@ -45,6 +54,19 @@ class Settings:
         web_host: Interface the web application binds to.
         web_port: Port the web application listens on.
         log_level: Verbosity of the log output.
+        rate_limit_per_minute: Answered questions a single client may request
+            within one minute before it is rejected.
+        rate_limit_per_hour: Answered questions a single client may request
+            within one hour.
+        trust_forwarded_for: Whether the client address may be taken from the
+            ``X-Forwarded-For`` header. Only safe behind a trusted proxy such
+            as the API Gateway; when disabled, the peer address is used.
+        cors_allowed_origins: Origins allowed to call the JSON API from a
+            browser. Empty means same-origin only.
+        conversation_ttl_seconds: Idle time after which a conversation is
+            dropped from the store.
+        max_conversations: Upper bound of conversations kept in memory; the
+            least recently used one is dropped beyond it.
     """
 
     chroma_host: str = DEFAULT_CHROMA_HOST
@@ -59,6 +81,13 @@ class Settings:
     web_host: str = DEFAULT_WEB_HOST
     web_port: int = DEFAULT_WEB_PORT
     log_level: str = DEFAULT_LOG_LEVEL
+    rate_limit_per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE
+    rate_limit_per_hour: int = DEFAULT_RATE_LIMIT_PER_HOUR
+    trust_forwarded_for: bool = DEFAULT_TRUST_FORWARDED_FOR
+    # Tuple, not list: a frozen dataclass generates __hash__ over its fields.
+    cors_allowed_origins: tuple[str, ...] = DEFAULT_CORS_ALLOWED_ORIGINS
+    conversation_ttl_seconds: int = DEFAULT_CONVERSATION_TTL_SECONDS
+    max_conversations: int = DEFAULT_MAX_CONVERSATIONS
 
     def __post_init__(self) -> None:
         """Validates the configuration.
@@ -100,6 +129,32 @@ class Settings:
             raise ValueError(f"web_port outside 1-65535: {self.web_port}")
         if self.log_level not in _VALID_LOG_LEVELS:
             raise ValueError(f"unknown log_level: {self.log_level}")
+        if self.rate_limit_per_minute < 1:
+            raise ValueError(
+                "rate_limit_per_minute must be positive: "
+                f"{self.rate_limit_per_minute}"
+            )
+        if self.rate_limit_per_hour < self.rate_limit_per_minute:
+            raise ValueError(
+                "rate_limit_per_hour must not be smaller than "
+                f"rate_limit_per_minute: {self.rate_limit_per_hour} < "
+                f"{self.rate_limit_per_minute}"
+            )
+        if self.conversation_ttl_seconds < 1:
+            raise ValueError(
+                "conversation_ttl_seconds must be positive: "
+                f"{self.conversation_ttl_seconds}"
+            )
+        if self.max_conversations < 1:
+            raise ValueError(
+                f"max_conversations must be positive: {self.max_conversations}"
+            )
+        for origin in self.cors_allowed_origins:
+            _validate_origin(origin)
+        # Keeps the frozen dataclass hashable when callers pass a list.
+        object.__setattr__(
+            self, "cors_allowed_origins", tuple(self.cors_allowed_origins)
+        )
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -139,6 +194,26 @@ class Settings:
             web_host=source.get("WEB_HOST", DEFAULT_WEB_HOST),
             web_port=_int(source, "WEB_PORT", DEFAULT_WEB_PORT),
             log_level=source.get("LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
+            rate_limit_per_minute=_int(
+                source, "RATE_LIMIT_PER_MINUTE", DEFAULT_RATE_LIMIT_PER_MINUTE
+            ),
+            rate_limit_per_hour=_int(
+                source, "RATE_LIMIT_PER_HOUR", DEFAULT_RATE_LIMIT_PER_HOUR
+            ),
+            trust_forwarded_for=_bool(
+                source, "TRUST_FORWARDED_FOR", DEFAULT_TRUST_FORWARDED_FOR
+            ),
+            cors_allowed_origins=_csv(
+                source, "CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS
+            ),
+            conversation_ttl_seconds=_int(
+                source,
+                "CONVERSATION_TTL_SECONDS",
+                DEFAULT_CONVERSATION_TTL_SECONDS,
+            ),
+            max_conversations=_int(
+                source, "MAX_CONVERSATIONS", DEFAULT_MAX_CONVERSATIONS
+            ),
         )
 
     def with_overrides(self, **overrides: Any) -> "Settings":
@@ -180,3 +255,70 @@ def _int(env: dict[str, str] | Any, key: str, default: int) -> int:
         return int(raw)
     except ValueError as exc:
         raise ValueError(f"{key} is not an integer: {raw!r}") from exc
+
+
+def _bool(env: dict[str, str] | Any, key: str, default: bool) -> bool:
+    """Reads a boolean from the environment.
+
+    Args:
+        env: Mapping of variable names to values.
+        key: Name of the variable.
+        default: Value used if the variable is not set.
+
+    Returns:
+        The parsed value or ``default``.
+
+    Raises:
+        ValueError: If the value is not a known boolean spelling.
+    """
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    normalized = raw.strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    raise ValueError(f"{key} is not a boolean: {raw!r}")
+
+
+def _csv(
+    env: dict[str, str] | Any, key: str, default: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Reads a comma separated list from the environment.
+
+    Args:
+        env: Mapping of variable names to values.
+        key: Name of the variable.
+        default: Value used if the variable is not set.
+
+    Returns:
+        The parsed entries without surrounding whitespace, or ``default``.
+    """
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    return tuple(entry.strip() for entry in raw.split(",") if entry.strip())
+
+
+def _validate_origin(origin: str) -> None:
+    """Checks that an entry of the CORS allow list is a bare origin.
+
+    Args:
+        origin: The configured entry.
+
+    Raises:
+        ValueError: If the entry is a wildcard, lacks a scheme or carries a
+            path, since browsers match origins literally.
+    """
+    if origin == "*":
+        raise ValueError(
+            "cors_allowed_origins must not contain '*': list the origins "
+            "explicitly"
+        )
+    if not origin.startswith(_ORIGIN_SCHEMES):
+        raise ValueError(
+            f"cors origin must start with http:// or https://: {origin!r}"
+        )
+    if origin.endswith("/") or "/" in origin.split("//", 1)[1]:
+        raise ValueError(f"cors origin must not contain a path: {origin!r}")

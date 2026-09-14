@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Callable
 
@@ -21,10 +22,12 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.cors import CORSMiddleware
 
 from .config import Settings
 from .conversation import ConversationStore, InMemoryConversationStore
 from .pipeline import ConversationEngine
+from .ratelimit import SlidingWindowRateLimiter
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -53,6 +56,14 @@ UNEXPECTED_ERROR = (
 )
 INVALID_QUESTION = f"Bitte gib eine Frage ein (maximal {MAX_QUESTION_LENGTH} Zeichen)."
 INVALID_CONVERSATION_ID = "Unbekannte Konversations-ID."
+RATE_LIMITED = (
+    "Zu viele Anfragen in kurzer Zeit. "
+    "Bitte warte einen Moment und versuche es dann erneut."
+)
+
+UNKNOWN_CLIENT = "unknown"
+
+_MAX_TRACKED_LOCKS = 10_000
 
 _KNOWLEDGE_BASE_ERRORS = (chromadb.errors.ChromaError, httpx.HTTPError)
 _ANSWER_SERVICE_ERRORS = (
@@ -80,6 +91,32 @@ def _is_valid_conversation_id(conversation_id: str) -> bool:
     except ValueError:
         return False
     return parsed.version == 4 and str(parsed) == conversation_id
+
+
+def _client_key(request: Request, trust_forwarded_for: bool) -> str:
+    """Determines which client a request is charged to.
+
+    Behind the API Gateway every request reaches the task through the same VPC
+    link interface, so the peer address would put all callers into one bucket.
+    The original address is then taken from ``X-Forwarded-For``, whose first
+    entry is the client. The header is only trusted when the deployment puts a
+    proxy in front of the application, because a direct caller can forge it.
+
+    Args:
+        request: The incoming request.
+        trust_forwarded_for: Whether the forwarding header may be used.
+
+    Returns:
+        The identifier the rate limit is counted against.
+    """
+    if trust_forwarded_for:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        client = forwarded.split(",")[0].strip()
+        if client:
+            return client
+    if request.client is not None and request.client.host:
+        return request.client.host
+    return UNKNOWN_CLIENT
 
 
 class _EngineProvider:
@@ -135,12 +172,18 @@ class _ConversationLocks:
     """Per-conversation locks around the load-modify-save cycle.
 
     Turns of one conversation are serialized while different conversations stay
-    fully concurrent.
+    fully concurrent. The registry is bounded so that it cannot outgrow the
+    conversation store it guards.
     """
 
-    def __init__(self) -> None:
-        """Initializes an empty lock registry."""
-        self._locks: dict[str, threading.Lock] = {}
+    def __init__(self, max_locks: int = _MAX_TRACKED_LOCKS) -> None:
+        """Initializes an empty lock registry.
+
+        Args:
+            max_locks: Upper bound of remembered locks.
+        """
+        self._locks: OrderedDict[str, threading.Lock] = OrderedDict()
+        self._max_locks = max_locks
         self._guard = threading.Lock()
 
     def get(self, conversation_id: str) -> threading.Lock:
@@ -153,7 +196,16 @@ class _ConversationLocks:
             The lock guarding this conversation.
         """
         with self._guard:
-            return self._locks.setdefault(conversation_id, threading.Lock())
+            lock = self._locks.get(conversation_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[conversation_id] = lock
+            self._locks.move_to_end(conversation_id)
+            while len(self._locks) > self._max_locks:
+                # Only drops locks of the least recently used conversations,
+                # which are no longer in the store either.
+                self._locks.popitem(last=False)
+            return lock
 
 
 def create_app(
@@ -170,19 +222,64 @@ def create_app(
         The configured application.
     """
     effective = settings or Settings.from_env()
-    store: ConversationStore = InMemoryConversationStore()
+    store: ConversationStore = InMemoryConversationStore(
+        ttl_seconds=effective.conversation_ttl_seconds,
+        max_conversations=effective.max_conversations,
+    )
     provider = _EngineProvider(effective, store, engine_factory)
     locks = _ConversationLocks()
+    limiter = SlidingWindowRateLimiter(
+        per_minute=effective.rate_limit_per_minute,
+        per_hour=effective.rate_limit_per_hour,
+    )
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
     app = FastAPI(title="cvbot", docs_url="/api/docs", redoc_url=None)
+
+    # An empty allow list emits no CORS headers at all, which keeps the JSON
+    # API same-origin unless origins are configured explicitly.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(effective.cors_allowed_origins),
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+        allow_credentials=False,
+    )
+
+    def _rate_limited(request: Request) -> JSONResponse | None:
+        """Charges a request to its client and builds the refusal if needed.
+
+        Args:
+            request: The incoming request.
+
+        Returns:
+            The ``429`` response, or ``None`` if the request may proceed.
+        """
+        decision = limiter.check(
+            _client_key(request, effective.trust_forwarded_for)
+        )
+        if decision.allowed:
+            return None
+        return _error(
+            429,
+            RATE_LIMITED,
+            headers={"Retry-After": str(decision.retry_after)},
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _on_validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         """Replaces the field-level default response with one friendly text."""
-        LOGGER.info("rejected request to %s: %s", request.url.path, exc.errors())
+        # Only the failing fields, never exc.errors(): those carry the input.
+        fields = [
+            ".".join(str(part) for part in error["loc"]) for error in exc.errors()
+        ]
+        LOGGER.info(
+            "rejected request to %s: invalid %s",
+            request.url.path,
+            ", ".join(fields) or "payload",
+        )
         return _error(400, INVALID_QUESTION)
 
     @app.get("/", response_class=RedirectResponse)
@@ -224,8 +321,21 @@ def create_app(
         )
 
     @app.post("/api/conversations", response_model=NewConversationResponse)
-    def create_conversation() -> NewConversationResponse:
-        """Hands out an identifier for a new conversation."""
+    def create_conversation(
+        request: Request,
+    ) -> NewConversationResponse | JSONResponse:
+        """Hands out an identifier for a new conversation.
+
+        Args:
+            request: The incoming request, used to identify the client.
+
+        Returns:
+            The new identifier, or an error response if the client is over its
+            budget.
+        """
+        refusal = _rate_limited(request)
+        if refusal is not None:
+            return refusal
         return NewConversationResponse(conversation_id=str(uuid.uuid4()))
 
     @app.get(
@@ -257,11 +367,12 @@ def create_app(
         response_model=ChatResponse,
     )
     def post_message(
-        conversation_id: str, payload: ChatRequest
+        request: Request, conversation_id: str, payload: ChatRequest
     ) -> ChatResponse | JSONResponse:
         """Answers a question and returns the resulting conversation state.
 
         Args:
+            request: The incoming request, used to identify the client.
             conversation_id: Identifier taken from the path.
             payload: The question to answer.
 
@@ -271,6 +382,12 @@ def create_app(
         """
         if not _is_valid_conversation_id(conversation_id):
             return _error(400, INVALID_CONVERSATION_ID)
+
+        # Checked before the engine is touched: every answer costs two
+        # Bedrock calls.
+        refusal = _rate_limited(request)
+        if refusal is not None:
+            return refusal
 
         try:
             engine = provider.get()
@@ -303,12 +420,15 @@ def create_app(
     return app
 
 
-def _error(status_code: int, detail: str) -> JSONResponse:
+def _error(
+    status_code: int, detail: str, headers: dict[str, str] | None = None
+) -> JSONResponse:
     """Builds an error response without leaking internals.
 
     Args:
         status_code: HTTP status code of the response.
         detail: Message that is shown to the user.
+        headers: Additional response headers, for example ``Retry-After``.
 
     Returns:
         The response carrying only the message.
@@ -316,4 +436,5 @@ def _error(status_code: int, detail: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content=ErrorResponse(detail=detail).model_dump(),
+        headers=headers,
     )

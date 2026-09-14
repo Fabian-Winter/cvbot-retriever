@@ -73,10 +73,88 @@ usually only `CHROMA_HOST` needs to be set.
 | `WEB_HOST` | `127.0.0.1` | Interface the web application binds to |
 | `WEB_PORT` | `8080` | Port the web application listens on |
 | `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING` or `ERROR` |
+| `RATE_LIMIT_PER_MINUTE` | `10` | Answered questions per client and minute |
+| `RATE_LIMIT_PER_HOUR` | `60` | Answered questions per client and hour |
+| `TRUST_FORWARDED_FOR` | `true` | Read the client address from `X-Forwarded-For` |
+| `CORS_ALLOWED_ORIGINS` | empty | Comma separated origins allowed to call the JSON API |
+| `CONVERSATION_TTL_SECONDS` | `1800` | Idle time after which a conversation is dropped |
+| `MAX_CONVERSATIONS` | `50` | Conversations kept in memory at once |
 
 `CHROMA_COLLECTION` and `EMBEDDING_MODEL_ID` must match the values used by
 cvbot-embedder, otherwise the query vectors are incompatible with the indexed
 ones.
+
+## Security
+
+The application is publicly reachable, so it is hardened against abuse, cost
+run-away and unnecessary data retention.
+
+### Rate limiting
+
+Every answer costs one Bedrock embedding call and one Bedrock LLM call, which
+makes an unthrottled endpoint a direct cost risk. `POST /api/conversations` and
+`POST /api/conversations/{id}/messages` are therefore limited per client, with
+a sliding minute and hour window; the stricter of the two wins. A client over
+its budget receives `429` with a `Retry-After` header and a friendly message,
+and the engine is never touched. Reading endpoints and `/healthz` stay
+unthrottled, so the chat page and the ECS health check keep working while a
+client is blocked.
+
+A client is identified by the first entry of `X-Forwarded-For`, falling back to
+the peer address. Behind the API Gateway every request arrives through the same
+VPC link interface, so the peer address alone would put all callers into one
+bucket. The header is only read when `TRUST_FORWARDED_FOR` is set, because a
+direct caller could forge it; it is enabled in AWS, where the API Gateway is the
+only way in, and should be disabled when the application is exposed directly.
+
+This complements the API Gateway throttling (`webapp_throttle_rate_limit`),
+which caps the total load but cannot tell clients apart.
+
+### CORS
+
+The JSON API sets an explicit policy. `CORS_ALLOWED_ORIGINS` is empty by
+default, which emits no CORS headers at all and keeps the API same-origin; the
+bundled UI is served from the same origin and is unaffected. Configured origins
+must be complete origins (`https://example.com`) - a wildcard, a missing scheme
+or a path is rejected when the configuration is loaded. Credentials are never
+allowed, and only `GET` and `POST` are.
+
+### Prompt injection
+
+The system prompt marks the retrieved documents and the question as data rather
+than instructions, and refuses to disclose its own configuration. Retrieved
+chunks and questions are additionally stripped of the delimiter sequences that
+frame those blocks, so user input cannot close them early.
+
+### Conversation data
+
+Conversations live in the memory of the single task and are never written to
+disk or to a database. An entry that was idle for `CONVERSATION_TTL_SECONDS` is
+dropped on the next access, and the store keeps at most `MAX_CONVERSATIONS`
+entries, dropping the least recently used one beyond that. Both bounds limit
+how long conversation content exists at all and keep a long running task from
+growing with every visitor. A restart discards everything.
+
+### Logs
+
+Logs carry metadata only: counts, model IDs, conversation IDs and error types.
+Questions and answers are never logged, not even when a request is rejected -
+the validation handler logs the failing field names instead of the Pydantic
+error objects, which would contain the full user input. CloudWatch retention is
+capped in Terraform (`log_retention_days`, seven days by default).
+
+### Outside the scope of this proof of concept
+
+- No authentication or authorization: the application is intentionally public
+  and holds no data that is not meant to be public.
+- No WAF, bot detection or CAPTCHA in front of the API Gateway.
+- The rate limit is process-local. It is sound for the single task this service
+  runs as, but would need a shared store if it were ever scaled out.
+- A client behind a shared NAT counts as one client.
+- `/api/docs` stays publicly reachable; it describes the API surface but
+  exposes no internals.
+- No encryption of conversations in memory, and no audit trail of who asked
+  what.
 
 ## Usage
 
@@ -250,6 +328,7 @@ cvbot_retriever/
   llm.py           Bedrock Converse client for the generation
   pipeline.py      Orchestration of retrieval, context and generation
   schemas.py       Request and response models of the JSON API
+  ratelimit.py     Per-client rate limiting of the public endpoints
   webapp.py        Chat UI and JSON API
   templates/       Jinja2 template of the chat page
   __main__.py      Command line and server start
@@ -265,6 +344,4 @@ cvbot_retriever/
 - The web layer turns Bedrock and ChromaDB failures into a friendly message,
   but does not retry a failed turn; the library itself still propagates them
   unchanged.
-- The JSON API has neither rate limiting nor an explicit CORS policy, and
-  conversations have no expiry.
 

@@ -7,12 +7,18 @@ import pytest
 from cvbot_retriever.config import (
     DEFAULT_CHROMA_PORT,
     DEFAULT_COLLECTION_NAME,
+    DEFAULT_CONVERSATION_TTL_SECONDS,
+    DEFAULT_CORS_ALLOWED_ORIGINS,
     DEFAULT_EMBEDDING_MODEL_ID,
     DEFAULT_LLM_MODEL_ID,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_CONTEXT_TOKENS,
+    DEFAULT_MAX_CONVERSATIONS,
+    DEFAULT_RATE_LIMIT_PER_HOUR,
+    DEFAULT_RATE_LIMIT_PER_MINUTE,
     DEFAULT_RESPONSE_TOKEN_BUFFER,
     DEFAULT_TOP_K,
+    DEFAULT_TRUST_FORWARDED_FOR,
     DEFAULT_WEB_HOST,
     DEFAULT_WEB_PORT,
     Settings,
@@ -32,6 +38,16 @@ def test_from_env_uses_defaults_when_unset() -> None:
     assert settings.web_host == DEFAULT_WEB_HOST
     assert settings.web_port == DEFAULT_WEB_PORT
     assert settings.log_level == DEFAULT_LOG_LEVEL
+    assert settings.rate_limit_per_minute == DEFAULT_RATE_LIMIT_PER_MINUTE
+    assert settings.rate_limit_per_hour == DEFAULT_RATE_LIMIT_PER_HOUR
+    assert settings.trust_forwarded_for == DEFAULT_TRUST_FORWARDED_FOR
+    assert settings.cors_allowed_origins == DEFAULT_CORS_ALLOWED_ORIGINS
+    assert settings.conversation_ttl_seconds == DEFAULT_CONVERSATION_TTL_SECONDS
+    assert settings.max_conversations == DEFAULT_MAX_CONVERSATIONS
+
+
+def test_the_default_cors_policy_allows_no_origin() -> None:
+    assert Settings.from_env(env={}).cors_allowed_origins == ()
 
 
 def test_defaults_match_the_embedder_collection() -> None:
@@ -56,6 +72,12 @@ def test_from_env_reads_all_values() -> None:
             "WEB_HOST": "0.0.0.0",
             "WEB_PORT": "9000",
             "LOG_LEVEL": "debug",
+            "RATE_LIMIT_PER_MINUTE": "3",
+            "RATE_LIMIT_PER_HOUR": "30",
+            "TRUST_FORWARDED_FOR": "false",
+            "CORS_ALLOWED_ORIGINS": "https://a.example.com, https://b.example.com",
+            "CONVERSATION_TTL_SECONDS": "900",
+            "MAX_CONVERSATIONS": "50",
         }
     )
 
@@ -71,6 +93,69 @@ def test_from_env_reads_all_values() -> None:
     assert settings.web_host == "0.0.0.0"
     assert settings.web_port == 9000
     assert settings.log_level == "DEBUG"
+    assert settings.rate_limit_per_minute == 3
+    assert settings.rate_limit_per_hour == 30
+    assert settings.trust_forwarded_for is False
+    assert settings.cors_allowed_origins == (
+        "https://a.example.com",
+        "https://b.example.com",
+    )
+    assert settings.conversation_ttl_seconds == 900
+    assert settings.max_conversations == 50
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("yes", True),
+        ("on", True),
+        ("false", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
+    ],
+)
+def test_boolean_spellings_are_understood(raw: str, expected: bool) -> None:
+    settings = Settings.from_env(env={"TRUST_FORWARDED_FOR": raw})
+
+    assert settings.trust_forwarded_for is expected
+
+
+def test_a_non_boolean_flag_raises() -> None:
+    with pytest.raises(ValueError, match="TRUST_FORWARDED_FOR"):
+        Settings.from_env(env={"TRUST_FORWARDED_FOR": "maybe"})
+
+
+def test_empty_cors_entries_are_dropped() -> None:
+    settings = Settings.from_env(
+        env={"CORS_ALLOWED_ORIGINS": " https://a.example.com , , "}
+    )
+
+    assert settings.cors_allowed_origins == ("https://a.example.com",)
+
+
+def test_a_cors_wildcard_is_refused() -> None:
+    with pytest.raises(ValueError, match=r"\*"):
+        Settings.from_env(env={"CORS_ALLOWED_ORIGINS": "*"})
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["cv.example.com", "ftp://cv.example.com", "https://cv.example.com/app"],
+)
+def test_a_malformed_cors_origin_raises(origin: str) -> None:
+    with pytest.raises(ValueError, match="cors origin"):
+        Settings.from_env(env={"CORS_ALLOWED_ORIGINS": origin})
+
+
+def test_the_settings_stay_hashable_with_origins() -> None:
+    settings = Settings(cors_allowed_origins=["https://cv.example.com"])
+
+    assert hash(settings)
+    assert settings.cors_allowed_origins == ("https://cv.example.com",)
 
 
 def test_from_env_reads_process_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,6 +209,11 @@ def test_response_buffer_must_leave_room_for_the_context() -> None:
         {"web_port": 0},
         {"web_port": 70000},
         {"log_level": "TRACE"},
+        {"rate_limit_per_minute": 0},
+        {"rate_limit_per_minute": 10, "rate_limit_per_hour": 5},
+        {"conversation_ttl_seconds": 0},
+        {"max_conversations": 0},
+        {"cors_allowed_origins": ("*",)},
     ],
 )
 def test_invalid_values_raise(overrides: dict[str, object]) -> None:

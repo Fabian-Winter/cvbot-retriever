@@ -9,8 +9,12 @@ changes the conversation itself.
 from __future__ import annotations
 
 import logging
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
+from .config import DEFAULT_CONVERSATION_TTL_SECONDS, DEFAULT_MAX_CONVERSATIONS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -138,19 +142,66 @@ class ConversationStore(Protocol):
         ...
 
 
+@dataclass
+class _Entry:
+    """One stored conversation together with the time it was last used.
+
+    Attributes:
+        conversation: The stored conversation.
+        touched_at: Reading of the store clock at the last access.
+    """
+
+    conversation: Conversation
+    touched_at: float
+
+
 class InMemoryConversationStore:
-    """Process-local conversation store.
+    """Process-local conversation store with an idle timeout.
 
     Sufficient for tests and the command line; it is explicitly not shared
     between several application instances.
+
+    Conversations are kept only as long as they are in use: an entry that was
+    not touched within ``ttl_seconds`` is dropped, and the store never holds
+    more than ``max_conversations`` entries. Both bounds keep the memory of a
+    long running task from growing with every visitor and limit how long
+    conversation content exists at all.
     """
 
-    def __init__(self) -> None:
-        """Initializes an empty store."""
-        self._conversations: dict[str, Conversation] = {}
+    def __init__(
+        self,
+        ttl_seconds: int = DEFAULT_CONVERSATION_TTL_SECONDS,
+        max_conversations: int = DEFAULT_MAX_CONVERSATIONS,
+        time_source: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Initializes an empty store.
+
+        Args:
+            ttl_seconds: Idle time after which a conversation is dropped.
+            max_conversations: Upper bound of conversations kept at once.
+            time_source: Monotonic clock, replaced in tests.
+
+        Raises:
+            ValueError: If a bound is not positive.
+        """
+        if ttl_seconds < 1:
+            raise ValueError(f"ttl_seconds must be positive: {ttl_seconds}")
+        if max_conversations < 1:
+            raise ValueError(
+                f"max_conversations must be positive: {max_conversations}"
+            )
+
+        self._ttl_seconds = ttl_seconds
+        self._max_conversations = max_conversations
+        self._now = time_source
+        self._conversations: OrderedDict[str, _Entry] = OrderedDict()
+        self._lock = threading.Lock()
 
     def load(self, conversation_id: str) -> Conversation:
         """Reads a conversation.
+
+        An expired conversation is treated like an unknown one, so a returning
+        visitor simply starts over instead of seeing an error.
 
         Args:
             conversation_id: Identifier of the conversation.
@@ -164,11 +215,17 @@ class InMemoryConversationStore:
         if not conversation_id.strip():
             raise ValueError("conversation_id must not be empty")
 
-        stored = self._conversations.get(conversation_id)
-        if stored is None:
-            LOGGER.debug("new conversation %s", conversation_id)
-            return Conversation(conversation_id=conversation_id)
-        return replace(stored, messages=list(stored.messages))
+        with self._lock:
+            self._expire()
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                LOGGER.debug("new conversation %s", conversation_id)
+                return Conversation(conversation_id=conversation_id)
+
+            entry.touched_at = self._now()
+            self._conversations.move_to_end(conversation_id)
+            stored = entry.conversation
+            return replace(stored, messages=list(stored.messages))
 
     def save(self, conversation: Conversation) -> None:
         """Writes a conversation back.
@@ -176,6 +233,29 @@ class InMemoryConversationStore:
         Args:
             conversation: The conversation to store.
         """
-        self._conversations[conversation.conversation_id] = replace(
-            conversation, messages=list(conversation.messages)
-        )
+        with self._lock:
+            self._expire()
+            self._conversations[conversation.conversation_id] = _Entry(
+                conversation=replace(
+                    conversation, messages=list(conversation.messages)
+                ),
+                touched_at=self._now(),
+            )
+            self._conversations.move_to_end(conversation.conversation_id)
+            while len(self._conversations) > self._max_conversations:
+                dropped, _ = self._conversations.popitem(last=False)
+                LOGGER.debug("dropped conversation %s: store is full", dropped)
+
+    def _expire(self) -> None:
+        """Drops conversations that were idle for longer than the timeout.
+
+        Called while the lock is held, on every access, so that no background
+        thread is needed.
+        """
+        horizon = self._now() - self._ttl_seconds
+        while self._conversations:
+            conversation_id, entry = next(iter(self._conversations.items()))
+            if entry.touched_at > horizon:
+                break
+            del self._conversations[conversation_id]
+            LOGGER.debug("dropped conversation %s: idle", conversation_id)
