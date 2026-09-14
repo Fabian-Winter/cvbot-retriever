@@ -1,0 +1,24 @@
+# Everything the runtime image does not need; keeps requirements.txt and
+# cvbot_retriever/ (including templates/) in the build context.
+.git/
+.github/
+venv/
+tests/
+docs/
+
+__pycache__/
+*.py[codz]
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+Dockerfile
+.dockerignore
+.gitignore
+pytest.ini
+*.md
+LICENSE
+.DS_Store

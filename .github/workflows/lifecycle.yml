@@ -1,0 +1,110 @@
+# Starts or stops the web app together with ChromaDB.
+#
+# Trigger   manual only - both services stay at desired count 0 otherwise, which
+#           is what keeps Fargate costs at zero between demos.
+# Identity  OIDC against cvbot-gha-deploy-role, same role as the deployment.
+# Result    both ECS services toggled between desired count 0 and 1. Never more
+#           than one task per service: the web app keeps its conversations in
+#           memory, so a second instance would split the state.
+#
+# The web app is useless without ChromaDB, so both are always toggled together:
+# on start ChromaDB comes up first, on stop the web app goes down first.
+#
+# Required repository variables: AWS_REGION, AWS_DEPLOY_ROLE_ARN, ECS_CLUSTER,
+# ECS_WEBAPP_SERVICE, ECS_CHROMA_SERVICE, WEBAPP_API_URL.
+name: Start or stop web app
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Whether to run the services or shut them down'
+        required: true
+        type: choice
+        default: stop
+        options: [start, stop]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: lifecycle-webapp
+  cancel-in-progress: false
+
+jobs:
+  toggle:
+    name: ${{ inputs.action }} web app and ChromaDB
+    runs-on: ubuntu-latest
+    env:
+      CLUSTER: ${{ vars.ECS_CLUSTER }}
+      WEBAPP_SERVICE: ${{ vars.ECS_WEBAPP_SERVICE }}
+      CHROMA_SERVICE: ${{ vars.ECS_CHROMA_SERVICE }}
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Start ChromaDB
+        if: inputs.action == 'start'
+        run: |
+          set -euo pipefail
+          aws ecs update-service --cluster "$CLUSTER" --service "$CHROMA_SERVICE" --desired-count 1 > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$CHROMA_SERVICE"
+
+      - name: Start web app
+        if: inputs.action == 'start'
+        run: |
+          set -euo pipefail
+          aws ecs update-service --cluster "$CLUSTER" --service "$WEBAPP_SERVICE" --desired-count 1 > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$WEBAPP_SERVICE"
+
+      - name: Probe the public endpoint
+        if: inputs.action == 'start'
+        run: |
+          set -euo pipefail
+          url="${{ vars.WEBAPP_API_URL }}"
+          if [ -z "$url" ]; then
+            echo "::error::repository variable WEBAPP_API_URL is not set"
+            exit 1
+          fi
+          # Retries bridge the gap until the task is registered in Cloud Map and
+          # reachable through the API Gateway VPC link.
+          curl -fsS --retry 10 --retry-delay 6 --retry-all-errors "${url%/}/healthz"
+
+      - name: Stop web app
+        if: inputs.action == 'stop'
+        run: |
+          set -euo pipefail
+          aws ecs update-service --cluster "$CLUSTER" --service "$WEBAPP_SERVICE" --desired-count 0 > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$WEBAPP_SERVICE"
+
+      - name: Stop ChromaDB
+        if: inputs.action == 'stop'
+        run: |
+          set -euo pipefail
+          aws ecs update-service --cluster "$CLUSTER" --service "$CHROMA_SERVICE" --desired-count 0 > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$CHROMA_SERVICE"
+
+      - name: Summarize state
+        if: always()
+        run: |
+          set -euo pipefail
+          counts=$(aws ecs describe-services --cluster "$CLUSTER" \
+            --services "$WEBAPP_SERVICE" "$CHROMA_SERVICE" \
+            --query 'services[].[serviceName,desiredCount,runningCount]' --output text)
+          {
+            echo "### Lifecycle: ${{ inputs.action }}"
+            echo
+            echo '| Service | Desired | Running |'
+            echo '| --- | --- | --- |'
+            echo "$counts" | while read -r name desired running; do
+              echo "| \`$name\` | $desired | $running |"
+            done
+            if [ "${{ inputs.action }}" = "start" ]; then
+              echo
+              echo "Web app: ${{ vars.WEBAPP_API_URL }}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

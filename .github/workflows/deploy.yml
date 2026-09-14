@@ -1,0 +1,189 @@
+# Builds the container image and rolls it out to the ECS service that
+# cvbot-infra provisions.
+#
+# Trigger   push to main touching application code (see paths below), or a
+#           manual run; documentation-only changes do not deploy.
+# Identity  OIDC against cvbot-gha-deploy-role - no static AWS credentials. The
+#           role may push to the ECR repository, register task definitions,
+#           update the service and pass the two ECS roles.
+# Result    image in ECR tagged with the commit SHA and latest, plus a new task
+#           definition revision on the web app service.
+#
+# A stopped service (desired count 0) stays stopped: it only gets pointed at the
+# new revision and is started again through lifecycle.yml.
+#
+# Required repository variables: AWS_REGION, AWS_DEPLOY_ROLE_ARN,
+# ECR_REPOSITORY, ECS_CLUSTER, ECS_WEBAPP_SERVICE, ECS_TASK_FAMILY.
+name: Build and deploy web app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cvbot_retriever/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# The service runs exactly one task, so deployments must never overlap.
+concurrency:
+  group: deploy-webapp
+  cancel-in-progress: false
+
+env:
+  CONTAINER_NAME: webapp
+
+jobs:
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.tags.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Assemble image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          repository="${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}"
+          # The SHA tag is what gets deployed; latest keeps the default of the
+          # Terraform variable webapp_image_tag pointing at a real image.
+          echo "image=${repository}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tags=${repository}:${GITHUB_SHA},${repository}:latest" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Attestations would add untagged manifests that the ECR retention
+          # policy cannot clean up.
+          provenance: false
+
+      - name: Summarize image
+        run: |
+          {
+            echo '### Image pushed'
+            echo
+            echo '| Field | Value |'
+            echo '| --- | --- |'
+            echo "| Repository | \`${{ vars.ECR_REPOSITORY }}\` |"
+            echo "| Tags | \`${GITHUB_SHA}\`, \`latest\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to ECS
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      CLUSTER: ${{ vars.ECS_CLUSTER }}
+      SERVICE: ${{ vars.ECS_WEBAPP_SERVICE }}
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Render task definition with the new image
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition \
+            --task-definition "${{ vars.ECS_TASK_FAMILY }}" \
+            --query taskDefinition --output json > current-task-definition.json
+          # register-task-definition rejects the read-only fields that describe
+          # adds, so they are stripped before the image is swapped.
+          jq --arg image "${{ needs.build.outputs.image }}" --arg name "$CONTAINER_NAME" '
+            del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+            | .containerDefinitions |= map(if .name == $name then .image = $image else . end)
+          ' current-task-definition.json > new-task-definition.json
+          matches=$(jq --arg name "$CONTAINER_NAME" --arg image "${{ needs.build.outputs.image }}" \
+            '[.containerDefinitions[] | select(.name == $name and .image == $image)] | length' \
+            new-task-definition.json)
+          if [ "$matches" -ne 1 ]; then
+            echo "::error::container '$CONTAINER_NAME' not found once in family '${{ vars.ECS_TASK_FAMILY }}'"
+            exit 1
+          fi
+
+      - name: Register task definition revision
+        id: register
+        run: |
+          set -euo pipefail
+          arn=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$arn" >> "$GITHUB_OUTPUT"
+          echo "revision=${arn##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Read current desired count
+        id: current
+        run: |
+          set -euo pipefail
+          count=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].desiredCount' --output text)
+          if [ "$count" = "None" ]; then
+            echo "::error::service '$SERVICE' not found in cluster '$CLUSTER'"
+            exit 1
+          fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Stop the running task
+        if: steps.current.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          # Draining first keeps the single-task guarantee: a rolling deployment
+          # would briefly run the old and the new task side by side.
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --desired-count 0 > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+
+      - name: Point the service at the new revision
+        run: |
+          set -euo pipefail
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "${{ steps.register.outputs.arn }}" \
+            --desired-count "${{ steps.current.outputs.count }}" > /dev/null
+
+      - name: Wait for the service to become stable
+        if: steps.current.outputs.count != '0'
+        run: aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+
+      - name: Summarize deployment
+        run: |
+          {
+            echo '### Deployment'
+            echo
+            echo '| Field | Value |'
+            echo '| --- | --- |'
+            echo "| Service | \`$SERVICE\` |"
+            echo "| Task definition | \`${{ steps.register.outputs.revision }}\` |"
+            echo "| Image | \`${{ needs.build.outputs.image }}\` |"
+            echo "| Desired count | ${{ steps.current.outputs.count }} |"
+            echo
+            if [ "${{ steps.current.outputs.count }}" = "0" ]; then
+              echo 'The service was stopped and stays stopped. Run the "Start or stop web app" workflow with `start` to bring it up on this revision.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

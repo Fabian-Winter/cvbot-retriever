@@ -172,6 +172,69 @@ The tests run without AWS or network access: Bedrock is replaced by a
 deterministic embedding model and a Converse double, ChromaDB by a store
 double.
 
+## Deployment
+
+The application runs as a single Fargate task in the cluster provisioned by
+cvbot-infra, reachable through an HTTP API Gateway. Three workflows drive it,
+all authenticating through GitHub OIDC against `cvbot-gha-deploy-role` - no AWS
+access keys are stored in the repository.
+
+| Workflow | Trigger | Effect |
+| --- | --- | --- |
+| `run-pipeline.yml` | Push to `main` | Runs pytest with coverage into the step summary. Independent of the deployment, and a failing suite fails the job. |
+| `deploy.yml` | Push to `main` touching `cvbot_retriever/**`, `requirements.txt`, `Dockerfile`, `.dockerignore` or the workflow itself; or a manual run | Builds the image, pushes it to ECR, registers a new task definition revision and points the service at it. |
+| `lifecycle.yml` | Manual only | Toggles the web app and ChromaDB between desired count 0 and 1. |
+
+Documentation-only changes never trigger a deployment.
+
+### Image
+
+`Dockerfile` installs `requirements.txt` into a `python:3.13-slim` image, copies
+the package and runs `python -m cvbot_retriever --serve` as an unprivileged user
+on port 8080. Only `WEB_HOST` is defaulted to `0.0.0.0` in the image, every
+other setting comes from the task definition. The interpreter stays on `PATH`
+because the ECS health check calls `/healthz` through `python -c`.
+
+### Rolling out
+
+The image is tagged with the commit SHA, which is what gets deployed, and
+additionally with `latest` so that the `webapp_image_tag` default in Terraform
+keeps pointing at a real image.
+
+The service is replaced rather than rolled: the running task is drained to 0
+before the new revision starts. That preserves the guarantee of exactly one task
+which the in-memory conversation store depends on, at the price of a short
+outage and lost conversations on every deployment.
+
+A service that is stopped when the deployment runs stays stopped and only gets
+pointed at the new revision - starting it costs money and remains a deliberate
+manual step.
+
+### Starting and stopping
+
+Both services idle at desired count 0 so that nothing is billed between demos.
+Running the "Start or stop web app" workflow with `start` brings ChromaDB up
+first and the web app second, then probes `/healthz` through the public
+endpoint; `stop` shuts them down in reverse order. They are always toggled
+together because the web app cannot answer anything without ChromaDB.
+
+### Repository variables
+
+| Variable | Value |
+| --- | --- |
+| `AWS_REGION` | `eu-central-1` |
+| `AWS_DEPLOY_ROLE_ARN` | `arn:aws:iam::<account-id>:role/cvbot-gha-deploy-role` |
+| `ECR_REPOSITORY` | `cvbot-webapp` |
+| `ECS_CLUSTER` | `cvbot-cluster` |
+| `ECS_WEBAPP_SERVICE` | `cvbot-webapp-service` |
+| `ECS_CHROMA_SERVICE` | `cvbot-chroma-service` |
+| `ECS_TASK_FAMILY` | `cvbot-webapp` |
+| `WEBAPP_API_URL` | Invoke URL of the `cvbot-webapp-api` HTTP API |
+
+The trust policy of the deploy role only accepts OIDC subjects matching the
+`gh_oidc_claim` variable in cvbot-infra. It has to cover this repository too,
+otherwise `sts:AssumeRoleWithWebIdentity` fails before the first step.
+
 ## Layout
 
 ```

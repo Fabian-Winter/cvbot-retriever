@@ -7,7 +7,6 @@ on:
 jobs:
   python-tests:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -20,8 +19,12 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          # || true keeps the closing code fence from being skipped by the default "set -eo pipefail" if pytest fails
-          output=$(pytest --cov=cvbot_retriever --cov-report=term-missing 2>&1) || true
+          # The exit code is kept so the summary is always written, but a failing
+          # test suite still turns the job red instead of passing silently.
+          set +e
+          output=$(pytest --cov=cvbot_retriever --cov-report=term-missing 2>&1)
+          status=$?
+          set -e
           {
             echo '### Pytest Results'
             echo
@@ -29,3 +32,4 @@ jobs:
             echo "$output"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
