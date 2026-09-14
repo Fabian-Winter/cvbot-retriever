@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
+from cvbot_core.protocols import VectorStoreReader
 from langchain_core.documents import Document
 
 LOGGER = logging.getLogger(__name__)
 
 
-def retrieve(store: Any, question: str, top_k: int) -> list[Document]:
+def retrieve(
+    store: VectorStoreReader, question: str, top_k: int
+) -> list[Document]:
     """Looks up the chunks that match a question.
 
     The store embeds the question with the model it was opened with and returns
@@ -18,7 +20,7 @@ def retrieve(store: Any, question: str, top_k: int) -> list[Document]:
     (``source``, ``filename``, ``chunk_index`` and the Markdown headers).
 
     Args:
-        store: Source store exposing a ``similarity_search`` method.
+        store: Source store the chunks are read from.
         question: The user question.
         top_k: Number of chunks to retrieve.
 

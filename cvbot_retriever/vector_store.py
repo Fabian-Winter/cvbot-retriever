@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import chromadb
+from cvbot_core.vector_store import create_chroma_client
 from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
 
@@ -22,14 +23,8 @@ def create_client(settings: Settings) -> chromadb.ClientAPI:
     Returns:
         The connected Chroma client.
     """
-    LOGGER.info(
-        "connecting to ChromaDB: %s:%d",
-        settings.chroma_host,
-        settings.chroma_port,
-    )
-    return chromadb.HttpClient(
-        host=settings.chroma_host,
-        port=settings.chroma_port,
+    return create_chroma_client(
+        host=settings.chroma_host, port=settings.chroma_port
     )
 
 

@@ -1,49 +1,29 @@
 """Token counting for the context budget.
 
-Uses the same ``cl100k_base`` encoding as the chunking in cvbot-embedder. That
-is an approximation for the Bedrock models, but it keeps both repositories
-consistent and makes the budget deterministic and testable.
+Wraps the shared ``cl100k_base`` counting of cvbot-core with the per-message
+overhead that the Converse API adds around every turn.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from functools import lru_cache
 from typing import TYPE_CHECKING
 
-import tiktoken
+from cvbot_core.tokens import ENCODING_NAME, count_tokens, get_encoding
 
 if TYPE_CHECKING:
     from .conversation import Message
 
-ENCODING_NAME = "cl100k_base"
+__all__ = [
+    "ENCODING_NAME",
+    "MESSAGE_OVERHEAD_TOKENS",
+    "count_message_tokens",
+    "count_tokens",
+    "get_encoding",
+]
 
 # Rough allowance for the role framing the model adds around every message.
 MESSAGE_OVERHEAD_TOKENS = 4
-
-
-@lru_cache(maxsize=1)
-def _encoding() -> tiktoken.Encoding:
-    """Loads the encoding once per process.
-
-    Returns:
-        The ``cl100k_base`` encoding.
-    """
-    return tiktoken.get_encoding(ENCODING_NAME)
-
-
-def count_tokens(text: str) -> int:
-    """Counts the tokens of a text.
-
-    Args:
-        text: The text to measure.
-
-    Returns:
-        The token count according to ``cl100k_base``.
-    """
-    if not text:
-        return 0
-    return len(_encoding().encode(text))
 
 
 def count_message_tokens(messages: Iterable[Message]) -> int:

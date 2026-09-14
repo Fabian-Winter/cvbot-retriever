@@ -3,8 +3,21 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
+
+from cvbot_core.env import read_bool, read_csv, read_int, read_str
+from cvbot_core.logging_config import VALID_LOG_LEVELS
+from cvbot_core.overrides import apply_overrides
+from cvbot_core.validation import (
+    require_at_least,
+    require_below,
+    require_choice,
+    require_http_origins,
+    require_non_empty,
+    require_port,
+    require_positive,
+)
 
 DEFAULT_CHROMA_HOST = "localhost"
 DEFAULT_CHROMA_PORT = 8000
@@ -24,11 +37,6 @@ DEFAULT_TRUST_FORWARDED_FOR = True
 DEFAULT_CORS_ALLOWED_ORIGINS: tuple[str, ...] = ()
 DEFAULT_CONVERSATION_TTL_SECONDS = 1800
 DEFAULT_MAX_CONVERSATIONS = 50
-
-_VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
-_ORIGIN_SCHEMES = ("http://", "https://")
 
 
 @dataclass(frozen=True)
@@ -95,62 +103,36 @@ class Settings:
         Raises:
             ValueError: If a value is outside the accepted range.
         """
-        if not self.chroma_host:
-            raise ValueError("chroma_host must not be empty")
-        if not self.collection_name:
-            raise ValueError("collection_name must not be empty")
-        if not 1 <= self.chroma_port <= 65535:
-            raise ValueError(f"chroma_port outside 1-65535: {self.chroma_port}")
-        if not self.aws_region:
-            raise ValueError("aws_region must not be empty")
-        if not self.embedding_model_id:
-            raise ValueError("embedding_model_id must not be empty")
-        if not self.llm_model_id:
-            raise ValueError("llm_model_id must not be empty")
-        if self.top_k < 1:
-            raise ValueError(f"top_k must be positive: {self.top_k}")
-        if self.max_context_tokens < 1:
-            raise ValueError(
-                f"max_context_tokens must be positive: {self.max_context_tokens}"
-            )
-        if self.response_token_buffer < 1:
-            raise ValueError(
-                "response_token_buffer must be positive: "
-                f"{self.response_token_buffer}"
-            )
-        if self.response_token_buffer >= self.max_context_tokens:
-            raise ValueError(
-                "response_token_buffer must be smaller than max_context_tokens: "
-                f"{self.response_token_buffer} >= {self.max_context_tokens}"
-            )
-        if not self.web_host:
-            raise ValueError("web_host must not be empty")
-        if not 1 <= self.web_port <= 65535:
-            raise ValueError(f"web_port outside 1-65535: {self.web_port}")
-        if self.log_level not in _VALID_LOG_LEVELS:
-            raise ValueError(f"unknown log_level: {self.log_level}")
-        if self.rate_limit_per_minute < 1:
-            raise ValueError(
-                "rate_limit_per_minute must be positive: "
-                f"{self.rate_limit_per_minute}"
-            )
-        if self.rate_limit_per_hour < self.rate_limit_per_minute:
-            raise ValueError(
-                "rate_limit_per_hour must not be smaller than "
-                f"rate_limit_per_minute: {self.rate_limit_per_hour} < "
-                f"{self.rate_limit_per_minute}"
-            )
-        if self.conversation_ttl_seconds < 1:
-            raise ValueError(
-                "conversation_ttl_seconds must be positive: "
-                f"{self.conversation_ttl_seconds}"
-            )
-        if self.max_conversations < 1:
-            raise ValueError(
-                f"max_conversations must be positive: {self.max_conversations}"
-            )
-        for origin in self.cors_allowed_origins:
-            _validate_origin(origin)
+        require_non_empty(self.chroma_host, "chroma_host")
+        require_non_empty(self.collection_name, "collection_name")
+        require_port(self.chroma_port, "chroma_port")
+        require_non_empty(self.aws_region, "aws_region")
+        require_non_empty(self.embedding_model_id, "embedding_model_id")
+        require_non_empty(self.llm_model_id, "llm_model_id")
+        require_positive(self.top_k, "top_k")
+        require_positive(self.max_context_tokens, "max_context_tokens")
+        require_positive(self.response_token_buffer, "response_token_buffer")
+        require_below(
+            self.response_token_buffer,
+            self.max_context_tokens,
+            "response_token_buffer",
+            "max_context_tokens",
+        )
+        require_non_empty(self.web_host, "web_host")
+        require_port(self.web_port, "web_port")
+        require_choice(self.log_level, VALID_LOG_LEVELS, "log_level")
+        require_positive(self.rate_limit_per_minute, "rate_limit_per_minute")
+        require_at_least(
+            self.rate_limit_per_hour,
+            self.rate_limit_per_minute,
+            "rate_limit_per_hour",
+            "rate_limit_per_minute",
+        )
+        require_positive(
+            self.conversation_ttl_seconds, "conversation_ttl_seconds"
+        )
+        require_positive(self.max_conversations, "max_conversations")
+        require_http_origins(self.cors_allowed_origins, "cors_allowed_origins")
         # Keeps the frozen dataclass hashable when callers pass a list.
         object.__setattr__(
             self, "cors_allowed_origins", tuple(self.cors_allowed_origins)
@@ -174,44 +156,44 @@ class Settings:
         """
         source = os.environ if env is None else env
         return cls(
-            chroma_host=source.get("CHROMA_HOST", DEFAULT_CHROMA_HOST),
-            chroma_port=_int(source, "CHROMA_PORT", DEFAULT_CHROMA_PORT),
-            collection_name=source.get(
-                "CHROMA_COLLECTION", DEFAULT_COLLECTION_NAME
+            chroma_host=read_str(source, "CHROMA_HOST", DEFAULT_CHROMA_HOST),
+            chroma_port=read_int(source, "CHROMA_PORT", DEFAULT_CHROMA_PORT),
+            collection_name=read_str(
+                source, "CHROMA_COLLECTION", DEFAULT_COLLECTION_NAME
             ),
-            aws_region=source.get("AWS_REGION", DEFAULT_AWS_REGION),
-            embedding_model_id=source.get(
-                "EMBEDDING_MODEL_ID", DEFAULT_EMBEDDING_MODEL_ID
+            aws_region=read_str(source, "AWS_REGION", DEFAULT_AWS_REGION),
+            embedding_model_id=read_str(
+                source, "EMBEDDING_MODEL_ID", DEFAULT_EMBEDDING_MODEL_ID
             ),
-            llm_model_id=source.get("LLM_MODEL_ID", DEFAULT_LLM_MODEL_ID),
-            top_k=_int(source, "TOP_K", DEFAULT_TOP_K),
-            max_context_tokens=_int(
+            llm_model_id=read_str(source, "LLM_MODEL_ID", DEFAULT_LLM_MODEL_ID),
+            top_k=read_int(source, "TOP_K", DEFAULT_TOP_K),
+            max_context_tokens=read_int(
                 source, "MAX_CONTEXT_TOKENS", DEFAULT_MAX_CONTEXT_TOKENS
             ),
-            response_token_buffer=_int(
+            response_token_buffer=read_int(
                 source, "RESPONSE_TOKEN_BUFFER", DEFAULT_RESPONSE_TOKEN_BUFFER
             ),
-            web_host=source.get("WEB_HOST", DEFAULT_WEB_HOST),
-            web_port=_int(source, "WEB_PORT", DEFAULT_WEB_PORT),
-            log_level=source.get("LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
-            rate_limit_per_minute=_int(
+            web_host=read_str(source, "WEB_HOST", DEFAULT_WEB_HOST),
+            web_port=read_int(source, "WEB_PORT", DEFAULT_WEB_PORT),
+            log_level=read_str(source, "LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
+            rate_limit_per_minute=read_int(
                 source, "RATE_LIMIT_PER_MINUTE", DEFAULT_RATE_LIMIT_PER_MINUTE
             ),
-            rate_limit_per_hour=_int(
+            rate_limit_per_hour=read_int(
                 source, "RATE_LIMIT_PER_HOUR", DEFAULT_RATE_LIMIT_PER_HOUR
             ),
-            trust_forwarded_for=_bool(
+            trust_forwarded_for=read_bool(
                 source, "TRUST_FORWARDED_FOR", DEFAULT_TRUST_FORWARDED_FOR
             ),
-            cors_allowed_origins=_csv(
+            cors_allowed_origins=read_csv(
                 source, "CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS
             ),
-            conversation_ttl_seconds=_int(
+            conversation_ttl_seconds=read_int(
                 source,
                 "CONVERSATION_TTL_SECONDS",
                 DEFAULT_CONVERSATION_TTL_SECONDS,
             ),
-            max_conversations=_int(
+            max_conversations=read_int(
                 source, "MAX_CONVERSATIONS", DEFAULT_MAX_CONVERSATIONS
             ),
         )
@@ -228,97 +210,4 @@ class Settings:
         Returns:
             A new, validated ``Settings`` instance.
         """
-        effective = {
-            key: value for key, value in overrides.items() if value is not None
-        }
-        return replace(self, **effective)
-
-
-def _int(env: dict[str, str] | Any, key: str, default: int) -> int:
-    """Reads an integer from the environment.
-
-    Args:
-        env: Mapping of variable names to values.
-        key: Name of the variable.
-        default: Value used if the variable is not set.
-
-    Returns:
-        The parsed value or ``default``.
-
-    Raises:
-        ValueError: If the value is not an integer.
-    """
-    raw = env.get(key)
-    if raw is None or raw == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{key} is not an integer: {raw!r}") from exc
-
-
-def _bool(env: dict[str, str] | Any, key: str, default: bool) -> bool:
-    """Reads a boolean from the environment.
-
-    Args:
-        env: Mapping of variable names to values.
-        key: Name of the variable.
-        default: Value used if the variable is not set.
-
-    Returns:
-        The parsed value or ``default``.
-
-    Raises:
-        ValueError: If the value is not a known boolean spelling.
-    """
-    raw = env.get(key)
-    if raw is None or raw == "":
-        return default
-    normalized = raw.strip().lower()
-    if normalized in _TRUE_VALUES:
-        return True
-    if normalized in _FALSE_VALUES:
-        return False
-    raise ValueError(f"{key} is not a boolean: {raw!r}")
-
-
-def _csv(
-    env: dict[str, str] | Any, key: str, default: tuple[str, ...]
-) -> tuple[str, ...]:
-    """Reads a comma separated list from the environment.
-
-    Args:
-        env: Mapping of variable names to values.
-        key: Name of the variable.
-        default: Value used if the variable is not set.
-
-    Returns:
-        The parsed entries without surrounding whitespace, or ``default``.
-    """
-    raw = env.get(key)
-    if raw is None or raw == "":
-        return default
-    return tuple(entry.strip() for entry in raw.split(",") if entry.strip())
-
-
-def _validate_origin(origin: str) -> None:
-    """Checks that an entry of the CORS allow list is a bare origin.
-
-    Args:
-        origin: The configured entry.
-
-    Raises:
-        ValueError: If the entry is a wildcard, lacks a scheme or carries a
-            path, since browsers match origins literally.
-    """
-    if origin == "*":
-        raise ValueError(
-            "cors_allowed_origins must not contain '*': list the origins "
-            "explicitly"
-        )
-    if not origin.startswith(_ORIGIN_SCHEMES):
-        raise ValueError(
-            f"cors origin must start with http:// or https://: {origin!r}"
-        )
-    if origin.endswith("/") or "/" in origin.split("//", 1)[1]:
-        raise ValueError(f"cors origin must not contain a path: {origin!r}")
+        return apply_overrides(self, **overrides)

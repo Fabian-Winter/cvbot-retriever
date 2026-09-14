@@ -8,6 +8,7 @@ import sys
 import uuid
 
 import uvicorn
+from cvbot_core.logging_config import configure_logging
 
 from .config import Settings
 from .pipeline import ConversationEngine
@@ -78,10 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             web_host=args.host,
             web_port=args.port,
         )
-        logging.basicConfig(
-            level=settings.log_level,
-            format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        )
+        configure_logging(settings.log_level)
         if args.serve:
             return _serve(settings)
 

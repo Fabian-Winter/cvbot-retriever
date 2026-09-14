@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cvbot_core.embeddings
 import pytest
 
 from cvbot_retriever import embeddings
@@ -11,7 +12,9 @@ from cvbot_retriever.config import Settings
 def test_build_embeddings_passes_model_and_region(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(embeddings, "BedrockEmbeddings", lambda **kw: kw)
+    monkeypatch.setattr(
+        cvbot_core.embeddings, "BedrockEmbeddings", lambda **kw: kw
+    )
     settings = Settings(
         embedding_model_id="amazon.titan-embed-text-v2:0",
         aws_region="eu-west-1",
