@@ -18,10 +18,10 @@ from cvbot_core.validation import (
     require_port,
     require_positive,
 )
+from cvbot_core.vector_store import DEFAULT_COLLECTION_NAME
 
 DEFAULT_CHROMA_HOST = "localhost"
 DEFAULT_CHROMA_PORT = 8000
-DEFAULT_COLLECTION_NAME = "cvbot_documents"
 DEFAULT_AWS_REGION = "eu-central-1"
 DEFAULT_LLM_MODEL_ID = "amazon.nova-lite-v1:0"
 DEFAULT_TOP_K = 4
