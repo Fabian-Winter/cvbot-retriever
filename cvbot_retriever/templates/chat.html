@@ -119,7 +119,13 @@
 
   <div id="log" role="log" aria-live="polite">
     {% for message in messages %}
-      <div class="msg {{ message.role }}">{{ message.content }}</div>
+      <div class="msg {{ message.role }}">
+        {% if message.role == "assistant" %}
+          {{ message.content | safe }}
+        {% else %}
+          {{ message.content }}
+        {% endif %}
+      </div>
     {% else %}
       <p class="empty">Stelle die erste Frage, um das Gespräch zu beginnen.</p>
     {% endfor %}
@@ -160,7 +166,11 @@
     if (empty) empty.remove();
     const node = document.createElement("div");
     node.className = `msg ${role}`;
-    node.textContent = text;
+    if (role === "assistant") {
+      node.innerHTML = text;
+    } else {
+      node.textContent = text;
+    }
     log.appendChild(node);
     log.scrollTop = log.scrollHeight;
     return node;
@@ -190,7 +200,7 @@
     const pending = append("assistant", "…");
 
     try {
-      pending.textContent = await ask(question);
+      pending.innerHTML = await ask(question);
     } catch (error) {
       pending.className = "msg error";
       pending.textContent = error.message;
