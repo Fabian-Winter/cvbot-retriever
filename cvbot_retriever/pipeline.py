@@ -6,6 +6,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 
+from cvbot_core.embeddings import build_bedrock_embeddings
 from langchain_core.documents import Document
 
 from .config import Settings
@@ -16,11 +17,10 @@ from .conversation import (
     InMemoryConversationStore,
     Message,
 )
-from .embeddings import build_embeddings
 from .llm import BedrockLLMClient
 from .prompts import SYSTEM_PROMPT, build_user_message
 from .retriever import retrieve
-from .vector_store import create_client, open_collection
+from .vector_store import create_client, get_indexed_embedding_model_id, open_collection
 
 LOGGER = logging.getLogger(__name__)
 
@@ -64,8 +64,13 @@ class ConversationEngine:
         """
         self._settings = settings
         self._store = store or InMemoryConversationStore()
-        embeddings = build_embeddings(settings)
         client = create_client(settings)
+        embedding_model_id = get_indexed_embedding_model_id(
+            client, settings.collection_name
+        )
+        embeddings = build_bedrock_embeddings(
+            model_id=embedding_model_id, region_name=settings.aws_region
+        )
         self._collection = open_collection(
             client, settings.collection_name, embeddings
         )

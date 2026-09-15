@@ -65,7 +65,6 @@ usually only `CHROMA_HOST` needs to be set.
 | `CHROMA_PORT` | `8000` | Port of the ChromaDB |
 | `CHROMA_COLLECTION` | `cvbot_documents` | Name of the collection |
 | `AWS_REGION` | `eu-central-1` | Region of the Bedrock client |
-| `EMBEDDING_MODEL_ID` | `amazon.titan-embed-text-v2:0` | Bedrock model ID for the question |
 | `LLM_MODEL_ID` | `amazon.nova-lite-v1:0` | Bedrock model ID for the answer |
 | `TOP_K` | `4` | Number of chunks retrieved per question |
 | `MAX_CONTEXT_TOKENS` | `8000` | Upper bound for the whole context sent to the LLM |
@@ -80,9 +79,10 @@ usually only `CHROMA_HOST` needs to be set.
 | `CONVERSATION_TTL_SECONDS` | `1800` | Idle time after which a conversation is dropped |
 | `MAX_CONVERSATIONS` | `50` | Conversations kept in memory at once |
 
-`CHROMA_COLLECTION` and `EMBEDDING_MODEL_ID` must match the values used by
-cvbot-embedder, otherwise the query vectors are incompatible with the indexed
-ones.
+`CHROMA_COLLECTION` must match the value used by cvbot-embedder. The embedding
+model itself is not configured here: cvbot-retriever reads the model ID from
+the metadata cvbot-embedder stored on the collection and embeds the question
+with that exact model.
 
 ## Security
 

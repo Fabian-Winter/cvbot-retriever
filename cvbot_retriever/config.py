@@ -23,7 +23,6 @@ DEFAULT_CHROMA_HOST = "localhost"
 DEFAULT_CHROMA_PORT = 8000
 DEFAULT_COLLECTION_NAME = "cvbot_documents"
 DEFAULT_AWS_REGION = "eu-central-1"
-DEFAULT_EMBEDDING_MODEL_ID = "amazon.titan-embed-text-v2:0"
 DEFAULT_LLM_MODEL_ID = "amazon.nova-lite-v1:0"
 DEFAULT_TOP_K = 4
 DEFAULT_MAX_CONTEXT_TOKENS = 8000
@@ -43,16 +42,16 @@ DEFAULT_MAX_CONVERSATIONS = 50
 class Settings:
     """Runtime configuration of the retrieval pipeline.
 
-    ``collection_name`` and ``embedding_model_id`` must match the values used by
-    cvbot-embedder, otherwise the query vectors are incompatible with the
-    indexed ones.
+    ``collection_name`` must match the value used by cvbot-embedder, otherwise
+    the collection cannot be found. The embedding model itself is not
+    configured here: it is read from the collection metadata cvbot-embedder
+    wrote, so query and index vectors are always built with the same model.
 
     Attributes:
         chroma_host: Hostname of the ChromaDB container (AWS Fargate).
         chroma_port: Port of the ChromaDB container.
         collection_name: Name of the collection that is queried.
         aws_region: AWS region of the Bedrock client.
-        embedding_model_id: Bedrock model ID used to embed the question.
         llm_model_id: Bedrock model ID used to generate the answer.
         top_k: Number of chunks retrieved per question.
         max_context_tokens: Upper bound for the whole context sent to the LLM
@@ -81,7 +80,6 @@ class Settings:
     chroma_port: int = DEFAULT_CHROMA_PORT
     collection_name: str = DEFAULT_COLLECTION_NAME
     aws_region: str = DEFAULT_AWS_REGION
-    embedding_model_id: str = DEFAULT_EMBEDDING_MODEL_ID
     llm_model_id: str = DEFAULT_LLM_MODEL_ID
     top_k: int = DEFAULT_TOP_K
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
@@ -107,7 +105,6 @@ class Settings:
         require_non_empty(self.collection_name, "collection_name")
         require_port(self.chroma_port, "chroma_port")
         require_non_empty(self.aws_region, "aws_region")
-        require_non_empty(self.embedding_model_id, "embedding_model_id")
         require_non_empty(self.llm_model_id, "llm_model_id")
         require_positive(self.top_k, "top_k")
         require_positive(self.max_context_tokens, "max_context_tokens")
@@ -162,9 +159,6 @@ class Settings:
                 source, "CHROMA_COLLECTION", DEFAULT_COLLECTION_NAME
             ),
             aws_region=read_str(source, "AWS_REGION", DEFAULT_AWS_REGION),
-            embedding_model_id=read_str(
-                source, "EMBEDDING_MODEL_ID", DEFAULT_EMBEDDING_MODEL_ID
-            ),
             llm_model_id=read_str(source, "LLM_MODEL_ID", DEFAULT_LLM_MODEL_ID),
             top_k=read_int(source, "TOP_K", DEFAULT_TOP_K),
             max_context_tokens=read_int(

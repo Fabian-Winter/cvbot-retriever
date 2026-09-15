@@ -9,7 +9,6 @@ from cvbot_retriever.config import (
     DEFAULT_COLLECTION_NAME,
     DEFAULT_CONVERSATION_TTL_SECONDS,
     DEFAULT_CORS_ALLOWED_ORIGINS,
-    DEFAULT_EMBEDDING_MODEL_ID,
     DEFAULT_LLM_MODEL_ID,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_CONTEXT_TOKENS,
@@ -30,7 +29,6 @@ def test_from_env_uses_defaults_when_unset() -> None:
 
     assert settings.chroma_port == DEFAULT_CHROMA_PORT
     assert settings.collection_name == DEFAULT_COLLECTION_NAME
-    assert settings.embedding_model_id == DEFAULT_EMBEDDING_MODEL_ID
     assert settings.llm_model_id == DEFAULT_LLM_MODEL_ID
     assert settings.top_k == DEFAULT_TOP_K
     assert settings.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
@@ -54,7 +52,6 @@ def test_defaults_match_the_embedder_collection() -> None:
     settings = Settings.from_env(env={})
 
     assert settings.collection_name == "cvbot_documents"
-    assert settings.embedding_model_id == "amazon.titan-embed-text-v2:0"
 
 
 def test_from_env_reads_all_values() -> None:
@@ -64,7 +61,6 @@ def test_from_env_reads_all_values() -> None:
             "CHROMA_PORT": "8443",
             "CHROMA_COLLECTION": "jobs",
             "AWS_REGION": "eu-west-1",
-            "EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v1",
             "LLM_MODEL_ID": "amazon.nova-pro-v1:0",
             "TOP_K": "8",
             "MAX_CONTEXT_TOKENS": "4000",
@@ -85,7 +81,6 @@ def test_from_env_reads_all_values() -> None:
     assert settings.chroma_port == 8443
     assert settings.collection_name == "jobs"
     assert settings.aws_region == "eu-west-1"
-    assert settings.embedding_model_id == "amazon.titan-embed-text-v1"
     assert settings.llm_model_id == "amazon.nova-pro-v1:0"
     assert settings.top_k == 8
     assert settings.max_context_tokens == 4000
@@ -199,7 +194,6 @@ def test_response_buffer_must_leave_room_for_the_context() -> None:
         {"chroma_port": 0},
         {"chroma_port": 70000},
         {"aws_region": ""},
-        {"embedding_model_id": ""},
         {"llm_model_id": ""},
         {"top_k": 0},
         {"max_context_tokens": 0},

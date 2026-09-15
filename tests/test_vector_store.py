@@ -48,3 +48,36 @@ def test_open_collection_wires_client_and_embeddings(
     assert store["client"] is client
     assert store["collection_name"] == "jobs"
     assert store["embedding_function"] is fake_embeddings
+    assert store["create_collection_if_not_exists"] is False
+
+
+class FakeCollection:
+    def __init__(self, metadata: dict[str, object] | None) -> None:
+        self.metadata = metadata
+
+
+class FakeClientWithCollection:
+    def __init__(self, collection: FakeCollection) -> None:
+        self._collection = collection
+
+    def get_collection(self, name: str) -> FakeCollection:
+        self.requested_name = name
+        return self._collection
+
+
+def test_get_indexed_embedding_model_id_reads_the_collection_metadata() -> None:
+    client = FakeClientWithCollection(
+        FakeCollection({"embedding_model_id": "amazon.titan-embed-text-v2:0"})
+    )
+
+    model_id = vector_store.get_indexed_embedding_model_id(client, "jobs")
+
+    assert model_id == "amazon.titan-embed-text-v2:0"
+    assert client.requested_name == "jobs"
+
+
+def test_get_indexed_embedding_model_id_raises_when_metadata_is_missing() -> None:
+    client = FakeClientWithCollection(FakeCollection(None))
+
+    with pytest.raises(RuntimeError, match="jobs"):
+        vector_store.get_indexed_embedding_model_id(client, "jobs")

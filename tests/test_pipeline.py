@@ -70,8 +70,15 @@ def patched_pipeline(
         The Bedrock runtime the pipeline generates the answer with.
     """
     runtime = FakeBedrockRuntime([ANSWER])
-    monkeypatch.setattr(pipeline, "build_embeddings", lambda s: fake_embeddings)
     monkeypatch.setattr(pipeline, "create_client", lambda s: object())
+    monkeypatch.setattr(
+        pipeline,
+        "get_indexed_embedding_model_id",
+        lambda c, name: "amazon.titan-embed-text-v2:0",
+    )
+    monkeypatch.setattr(
+        pipeline, "build_bedrock_embeddings", lambda model_id, region_name: fake_embeddings
+    )
     monkeypatch.setattr(
         pipeline, "open_collection", lambda c, name, emb: FakeStore(CHUNKS)
     )
