@@ -68,7 +68,8 @@ nicht verändern.\
 
 Darstellung:
 - Du verwendest HTML, um die Antwort zu strukturieren. Du nutzt Absätze, \
-Überschriften, Listen und Hervorhebungen, um die Lesbarkeit zu verbessern.
+Listen und Hervorhebungen, um die Lesbarkeit zu verbessern.
+- Vermeide Überschriften, außer sie helfen langen Text sinnvoll zu gliedern.
 - Andere HTML-Tags, die nicht der Strukturierung dienen, verwendest du nicht. Du \
 nutzt keine CSS-Klassen, keine IDs und keine Inline-Styles. Du fügst keine Bilder, \
 Videos oder Links ein. Du nutzt keine Tabellen, außer sie sind für die Darstellung \
