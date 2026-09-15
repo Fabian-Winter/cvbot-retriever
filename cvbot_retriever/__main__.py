@@ -8,7 +8,7 @@ import sys
 import uuid
 
 import uvicorn
-from cvbot_core.logging_config import configure_logging
+from cvbot_core.logging_config import VALID_LOG_LEVELS, configure_logging
 
 from .config import Settings
 from .pipeline import ConversationEngine
@@ -52,7 +52,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, help="number of chunks to retrieve")
     parser.add_argument(
         "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        choices=sorted(VALID_LOG_LEVELS),
         help="verbosity of the log output (default: LOG_LEVEL or INFO)",
     )
     return parser.parse_args(argv)

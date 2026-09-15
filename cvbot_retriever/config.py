@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from cvbot_core.env import read_bool, read_csv, read_int, read_str
-from cvbot_core.logging_config import VALID_LOG_LEVELS
+from cvbot_core.logging_config import DEFAULT_LOG_LEVEL, VALID_LOG_LEVELS
 from cvbot_core.overrides import apply_overrides
 from cvbot_core.validation import (
     require_at_least,
@@ -18,10 +18,12 @@ from cvbot_core.validation import (
     require_port,
     require_positive,
 )
-from cvbot_core.vector_store import DEFAULT_COLLECTION_NAME
+from cvbot_core.vector_store import (
+    DEFAULT_CHROMA_HOST,
+    DEFAULT_CHROMA_PORT,
+    DEFAULT_COLLECTION_NAME,
+)
 
-DEFAULT_CHROMA_HOST = "localhost"
-DEFAULT_CHROMA_PORT = 8000
 DEFAULT_AWS_REGION = "eu-central-1"
 DEFAULT_LLM_MODEL_ID = "amazon.nova-lite-v1:0"
 DEFAULT_TOP_K = 4
@@ -29,7 +31,6 @@ DEFAULT_MAX_CONTEXT_TOKENS = 8000
 DEFAULT_RESPONSE_TOKEN_BUFFER = 1024
 DEFAULT_WEB_HOST = "127.0.0.1"
 DEFAULT_WEB_PORT = 8080
-DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_RATE_LIMIT_PER_MINUTE = 10
 DEFAULT_RATE_LIMIT_PER_HOUR = 60
 DEFAULT_TRUST_FORWARDED_FOR = True
