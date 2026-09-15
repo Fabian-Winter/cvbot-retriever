@@ -1,4 +1,4 @@
-name: Run retrieval pipeline
+name: Run python tests
 
 on:
   push:
