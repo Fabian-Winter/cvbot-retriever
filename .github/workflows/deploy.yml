@@ -40,8 +40,38 @@ env:
   CONTAINER_NAME: webapp
 
 jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          # The exit code is kept so the summary is always written, but a failing
+          # test suite still turns the job red instead of passing silently.
+          set +e
+          output=$(pytest --cov=cvbot_retriever --cov-report=term-missing 2>&1)
+          status=$?
+          set -e
+          {
+            echo '### Pytest Results'
+            echo
+            echo '```'
+            echo "$output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
   build:
     name: Build and push image
+    needs: python-tests
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.tags.outputs.image }}
