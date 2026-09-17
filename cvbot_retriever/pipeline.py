@@ -19,6 +19,7 @@ from .conversation import (
 )
 from .llm import BedrockLLMClient
 from .prompts import SYSTEM_PROMPT, build_user_message
+from .query_condensation import condense_question
 from .retriever import retrieve
 from .vector_store import create_client, get_indexed_embedding_model_id, open_collection
 
@@ -88,6 +89,10 @@ class ConversationEngine:
         token budget, generates the answer and appends both turns to the full
         history. Only the current question carries retrieved chunks; earlier
         turns are kept as plain text so that the history stays displayable.
+        Retrieval itself is based on a standalone version of the question: a
+        dedicated model call resolves references to earlier turns (e.g. "und
+        davor?") before the question is embedded, while the model that
+        generates the answer still sees the original wording.
 
         Args:
             conversation_id: Identifier of the conversation.
@@ -101,14 +106,16 @@ class ConversationEngine:
                 question alone exceed the context budget.
         """
         conversation = self._store.load(conversation_id)
-        chunks = retrieve(self._collection, question, self._settings.top_k)
+        history = conversation.history()
+        search_query = condense_question(self._llm, history, question)
+        chunks = retrieve(self._collection, search_query, self._settings.top_k)
         current = Message(
             role=ROLE_USER, content=build_user_message(question, chunks)
         )
 
         context = build_context(
             system_prompt=SYSTEM_PROMPT,
-            history=conversation.history(),
+            history=history,
             current_message=current,
             max_context_tokens=self._settings.max_context_tokens,
             response_token_buffer=self._settings.response_token_buffer,

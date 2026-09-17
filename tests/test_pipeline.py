@@ -173,6 +173,68 @@ def test_answer_rejects_empty_question(
         engine.answer("c1", "  ")
 
 
+def test_first_turn_does_not_trigger_a_condensation_call(
+    settings: Settings, patched_pipeline: FakeBedrockRuntime
+) -> None:
+    pipeline.ConversationEngine(settings).answer("c1", "Erste Frage?")
+
+    assert len(patched_pipeline.calls) == 1
+
+
+def test_later_turn_triggers_a_condensation_call_before_the_answer(
+    settings: Settings, patched_pipeline: FakeBedrockRuntime
+) -> None:
+    engine = pipeline.ConversationEngine(settings)
+
+    engine.answer("c1", "Erste Frage?")
+    engine.answer("c1", "Und danach?")
+
+    assert len(patched_pipeline.calls) == 3
+
+
+def test_retrieval_uses_the_condensed_query_on_a_later_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    fake_embeddings: FakeEmbeddings,
+) -> None:
+    store = FakeStore(CHUNKS)
+    runtime = FakeBedrockRuntime([ANSWER])
+    monkeypatch.setattr(pipeline, "create_client", lambda s: object())
+    monkeypatch.setattr(
+        pipeline,
+        "get_indexed_embedding_model_id",
+        lambda c, name: "amazon.titan-embed-text-v2:0",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_bedrock_embeddings",
+        lambda model_id, region_name: fake_embeddings,
+    )
+    monkeypatch.setattr(pipeline, "open_collection", lambda c, name, emb: store)
+    monkeypatch.setattr(
+        pipeline, "BedrockLLMClient", lambda s: BedrockLLMClient(s, client=runtime)
+    )
+    engine = pipeline.ConversationEngine(settings)
+
+    engine.answer("c1", "Erste Frage?")
+    engine.answer("c1", "Und danach?")
+
+    assert store.queries[0][0] == "Erste Frage?"
+    assert store.queries[1][0] != "Und danach?"
+
+
+def test_final_prompt_keeps_the_original_wording_of_a_follow_up(
+    settings: Settings, patched_pipeline: FakeBedrockRuntime
+) -> None:
+    engine = pipeline.ConversationEngine(settings)
+
+    engine.answer("c1", "Erste Frage?")
+    engine.answer("c1", "Und danach?")
+
+    prompt = patched_pipeline.calls[-1]["messages"][-1]["content"][0]["text"]
+    assert "Und danach?" in prompt
+
+
 def test_second_turn_sees_the_previous_turn(
     settings: Settings, patched_pipeline: FakeBedrockRuntime
 ) -> None:
