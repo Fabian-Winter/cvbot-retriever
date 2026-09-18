@@ -9,6 +9,7 @@ from cvbot_retriever.config import (
     DEFAULT_COLLECTION_NAME,
     DEFAULT_CONVERSATION_TTL_SECONDS,
     DEFAULT_CORS_ALLOWED_ORIGINS,
+    DEFAULT_FILTER_OVERFETCH_FACTOR,
     DEFAULT_LLM_MODEL_ID,
     DEFAULT_LOG_LEVEL,
     DEFAULT_MAX_CONTEXT_TOKENS,
@@ -31,6 +32,7 @@ def test_from_env_uses_defaults_when_unset() -> None:
     assert settings.collection_name == DEFAULT_COLLECTION_NAME
     assert settings.llm_model_id == DEFAULT_LLM_MODEL_ID
     assert settings.top_k == DEFAULT_TOP_K
+    assert settings.filter_overfetch_factor == DEFAULT_FILTER_OVERFETCH_FACTOR
     assert settings.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
     assert settings.response_token_buffer == DEFAULT_RESPONSE_TOKEN_BUFFER
     assert settings.web_host == DEFAULT_WEB_HOST
@@ -63,6 +65,7 @@ def test_from_env_reads_all_values() -> None:
             "AWS_REGION": "eu-west-1",
             "LLM_MODEL_ID": "amazon.nova-pro-v1:0",
             "TOP_K": "8",
+            "FILTER_OVERFETCH_FACTOR": "6",
             "MAX_CONTEXT_TOKENS": "4000",
             "RESPONSE_TOKEN_BUFFER": "500",
             "WEB_HOST": "0.0.0.0",
@@ -83,6 +86,7 @@ def test_from_env_reads_all_values() -> None:
     assert settings.aws_region == "eu-west-1"
     assert settings.llm_model_id == "amazon.nova-pro-v1:0"
     assert settings.top_k == 8
+    assert settings.filter_overfetch_factor == 6
     assert settings.max_context_tokens == 4000
     assert settings.response_token_buffer == 500
     assert settings.web_host == "0.0.0.0"
@@ -196,6 +200,8 @@ def test_response_buffer_must_leave_room_for_the_context() -> None:
         {"aws_region": ""},
         {"llm_model_id": ""},
         {"top_k": 0},
+        {"filter_overfetch_factor": 0},
+        {"filter_overfetch_factor": 100},
         {"max_context_tokens": 0},
         {"response_token_buffer": 0},
         {"max_context_tokens": 100, "response_token_buffer": 200},

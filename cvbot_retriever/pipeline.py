@@ -19,9 +19,14 @@ from .conversation import (
 )
 from .llm import BedrockLLMClient
 from .prompts import SYSTEM_PROMPT, build_user_message
-from .query_condensation import condense_question
+from .query_condensation import condense_and_extract
 from .retriever import retrieve
-from .vector_store import create_client, get_indexed_embedding_model_id, open_collection
+from .vector_store import (
+    create_client,
+    get_indexed_embedding_model_id,
+    get_indexed_metadata_schema,
+    open_collection,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +74,13 @@ class ConversationEngine:
         embedding_model_id = get_indexed_embedding_model_id(
             client, settings.collection_name
         )
+        self._metadata_schema = get_indexed_metadata_schema(
+            client, settings.collection_name
+        )
+        LOGGER.info(
+            "collection exposes %d filterable metadata field(s)",
+            len(self._metadata_schema),
+        )
         embeddings = build_bedrock_embeddings(
             model_id=embedding_model_id, region_name=settings.aws_region
         )
@@ -91,8 +103,10 @@ class ConversationEngine:
         turns are kept as plain text so that the history stays displayable.
         Retrieval itself is based on a standalone version of the question: a
         dedicated model call resolves references to earlier turns (e.g. "und
-        davor?") before the question is embedded, while the model that
-        generates the answer still sees the original wording.
+        davor?") and extracts metadata filters from the question, while the
+        model that generates the answer still sees the original wording. The
+        filters only re-rank the candidates, so a question without any
+        filterable criterion behaves exactly like a plain semantic search.
 
         Args:
             conversation_id: Identifier of the conversation.
@@ -107,8 +121,16 @@ class ConversationEngine:
         """
         conversation = self._store.load(conversation_id)
         history = conversation.history()
-        search_query = condense_question(self._llm, history, question)
-        chunks = retrieve(self._collection, search_query, self._settings.top_k)
+        condensed = condense_and_extract(
+            self._llm, history, question, self._metadata_schema
+        )
+        chunks = retrieve(
+            self._collection,
+            condensed.query,
+            self._settings.top_k,
+            filters=condensed.filters,
+            overfetch_factor=self._settings.filter_overfetch_factor,
+        )
         current = Message(
             role=ROLE_USER, content=build_user_message(question, chunks)
         )

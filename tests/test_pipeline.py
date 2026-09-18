@@ -76,6 +76,7 @@ def patched_pipeline(
         "get_indexed_embedding_model_id",
         lambda c, name: "amazon.titan-embed-text-v2:0",
     )
+    monkeypatch.setattr(pipeline, "get_indexed_metadata_schema", lambda c, name: {})
     monkeypatch.setattr(
         pipeline, "build_bedrock_embeddings", lambda model_id, region_name: fake_embeddings
     )
@@ -192,6 +193,72 @@ def test_later_turn_triggers_a_condensation_call_before_the_answer(
     assert len(patched_pipeline.calls) == 3
 
 
+def test_a_published_schema_costs_exactly_one_extra_call_on_the_first_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    fake_embeddings: FakeEmbeddings,
+) -> None:
+    store = FakeStore(CHUNKS)
+    runtime = FakeBedrockRuntime(['{"query": "Was 2020?", "filters": {}}', ANSWER])
+    monkeypatch.setattr(pipeline, "create_client", lambda s: object())
+    monkeypatch.setattr(
+        pipeline,
+        "get_indexed_embedding_model_id",
+        lambda c, name: "amazon.titan-embed-text-v2:0",
+    )
+    monkeypatch.setattr(
+        pipeline, "get_indexed_metadata_schema", lambda c, name: {"jahre": ["2020"]}
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_bedrock_embeddings",
+        lambda model_id, region_name: fake_embeddings,
+    )
+    monkeypatch.setattr(pipeline, "open_collection", lambda c, name, emb: store)
+    monkeypatch.setattr(
+        pipeline, "BedrockLLMClient", lambda s: BedrockLLMClient(s, client=runtime)
+    )
+
+    pipeline.ConversationEngine(settings).answer("c1", "Was war 2020?")
+
+    assert len(runtime.calls) == 2
+    assert store.queries == [("Was 2020?", settings.top_k)]
+
+
+def test_extracted_filters_overfetch_before_re_ranking(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    fake_embeddings: FakeEmbeddings,
+) -> None:
+    store = FakeStore(CHUNKS)
+    runtime = FakeBedrockRuntime(
+        ['{"query": "Was 2020?", "filters": {"jahre": ["2020"]}}', ANSWER]
+    )
+    monkeypatch.setattr(pipeline, "create_client", lambda s: object())
+    monkeypatch.setattr(
+        pipeline,
+        "get_indexed_embedding_model_id",
+        lambda c, name: "amazon.titan-embed-text-v2:0",
+    )
+    monkeypatch.setattr(
+        pipeline, "get_indexed_metadata_schema", lambda c, name: {"jahre": ["2020"]}
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_bedrock_embeddings",
+        lambda model_id, region_name: fake_embeddings,
+    )
+    monkeypatch.setattr(pipeline, "open_collection", lambda c, name, emb: store)
+    monkeypatch.setattr(
+        pipeline, "BedrockLLMClient", lambda s: BedrockLLMClient(s, client=runtime)
+    )
+    tuned = settings.with_overrides(top_k=2, filter_overfetch_factor=3)
+
+    pipeline.ConversationEngine(tuned).answer("c1", "Was war 2020?")
+
+    assert store.queries == [("Was 2020?", 6)]
+
+
 def test_retrieval_uses_the_condensed_query_on_a_later_turn(
     monkeypatch: pytest.MonkeyPatch,
     settings: Settings,
@@ -205,6 +272,7 @@ def test_retrieval_uses_the_condensed_query_on_a_later_turn(
         "get_indexed_embedding_model_id",
         lambda c, name: "amazon.titan-embed-text-v2:0",
     )
+    monkeypatch.setattr(pipeline, "get_indexed_metadata_schema", lambda c, name: {})
     monkeypatch.setattr(
         pipeline,
         "build_bedrock_embeddings",

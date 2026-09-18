@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 
 import chromadb
-from cvbot_core.vector_store import create_chroma_client, read_embedding_model_id
+from cvbot_core.vector_store import (
+    create_chroma_client,
+    read_embedding_model_id,
+    read_metadata_schema,
+)
 from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
 
@@ -45,6 +49,22 @@ def get_indexed_embedding_model_id(
             embedding model metadata.
     """
     return read_embedding_model_id(client, collection_name)
+
+
+def get_indexed_metadata_schema(
+    client: chromadb.ClientAPI, collection_name: str
+) -> dict[str, list[str]]:
+    """Reads the section metadata schema cvbot-embedder published.
+
+    Args:
+        client: The Chroma client.
+        collection_name: Name of the collection.
+
+    Returns:
+        Filterable fields mapped onto their known values, empty if the
+        documents carry no metadata.
+    """
+    return read_metadata_schema(client, collection_name)
 
 
 def open_collection(

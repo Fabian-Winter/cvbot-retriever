@@ -7,18 +7,44 @@ several turns of a conversation.
 
 ## How it works
 
-1. **Embed** – the question is embedded with the same Bedrock model the chunks
+1. **Condense and extract** – one small model call rewrites the question into
+   a standalone search query and extracts metadata filters from it. Both come
+   back as a single JSON object, so the second step costs no extra call.
+2. **Embed** – the query is embedded with the same Bedrock model the chunks
    were indexed with.
-2. **Retrieve** – the `TOP_K` nearest chunks are read from the ChromaDB
-   collection, including their metadata (`source`, `filename`, `chunk_index`).
-3. **Build the context** – chunks and question become the current user message;
+3. **Retrieve** – the `TOP_K` nearest chunks are read from the ChromaDB
+   collection, including their metadata (`source`, `filename`, `chunk_index`
+   and the section metadata written by cvbot-embedder).
+4. **Build the context** – chunks and question become the current user message;
    together with the system prompt and as much of the history as fits into
    `MAX_CONTEXT_TOKENS` minus `RESPONSE_TOKEN_BUFFER` they form the context.
-4. **Generate** – the context is sent to the Bedrock LLM through the Converse
+5. **Generate** – the context is sent to the Bedrock LLM through the Converse
    API, with the system prompt in its own block.
 
 The collection is only read; creating and filling it stays the responsibility
 of cvbot-embedder.
+
+## Metadata filters
+
+The filterable schema is not configured here: cvbot-embedder publishes the
+fields it observed in the documents on the collection, and it is injected into
+the condensation prompt so the model knows what it may filter on.
+
+The pipeline is deliberately tolerant, in both directions:
+
+- **Nothing is ever excluded.** Filters only re-rank. A matching chunk scores
+  `+1` per field and moves up; a chunk that lacks the field keeps its place. A
+  filter without a single match therefore degrades into plain semantic search
+  instead of returning nothing.
+- **Nothing is ever invented.** Every extracted field and value is validated
+  against the published schema; anything unknown is dropped with a log entry.
+  A question without a filterable criterion yields empty filters, not an error.
+- **Nothing is ever required.** A collection indexed before this feature, or
+  one whose documents carry no metadata, reports an empty schema – the whole
+  step then behaves exactly as before, including the free first turn.
+
+`FILTER_OVERFETCH_FACTOR` controls how far down the similarity ranking a
+matching chunk may still be pulled up from.
 
 ## Conversations and context
 
@@ -67,6 +93,7 @@ usually only `CHROMA_HOST` needs to be set.
 | `AWS_REGION` | `eu-central-1` | Region of the Bedrock client |
 | `LLM_MODEL_ID` | `amazon.nova-lite-v1:0` | Bedrock model ID for the answer |
 | `TOP_K` | `4` | Number of chunks retrieved per question |
+| `FILTER_OVERFETCH_FACTOR` | `4` | How many times `TOP_K` is fetched before metadata filters re-rank the candidates |
 | `MAX_CONTEXT_TOKENS` | `8000` | Upper bound for the whole context sent to the LLM |
 | `RESPONSE_TOKEN_BUFFER` | `1024` | Part of the budget kept free for the answer |
 | `WEB_HOST` | `127.0.0.1` | Interface the web application binds to |
@@ -321,6 +348,7 @@ cvbot_retriever/
   embeddings.py    Bedrock embedding model for the question
   vector_store.py  Read-only ChromaDB client and collection
   retriever.py     Top-k chunk lookup
+  query_condensation.py  Standalone query and metadata filter extraction
   prompts.py       System prompt and user message construction
   conversation.py  Messages, full history and conversation store
   tokens.py        Token counting for the context budget

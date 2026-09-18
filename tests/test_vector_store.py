@@ -81,3 +81,21 @@ def test_get_indexed_embedding_model_id_raises_when_metadata_is_missing() -> Non
 
     with pytest.raises(RuntimeError, match="jobs"):
         vector_store.get_indexed_embedding_model_id(client, "jobs")
+
+
+def test_get_indexed_metadata_schema_reads_the_collection_metadata() -> None:
+    client = FakeClientWithCollection(
+        FakeCollection({"metadata_schema": '{"status":["aktuell"]}'})
+    )
+
+    assert vector_store.get_indexed_metadata_schema(client, "jobs") == {
+        "status": ["aktuell"]
+    }
+
+
+def test_get_indexed_metadata_schema_is_empty_for_an_older_collection() -> None:
+    client = FakeClientWithCollection(
+        FakeCollection({"embedding_model_id": "amazon.titan-embed-text-v2:0"})
+    )
+
+    assert vector_store.get_indexed_metadata_schema(client, "jobs") == {}

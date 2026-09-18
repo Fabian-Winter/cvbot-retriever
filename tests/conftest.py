@@ -25,12 +25,13 @@ class FakeStore:
         self.documents = list(documents or ())
         self.queries: list[tuple[str, int]] = []
 
-    def similarity_search(self, query: str, k: int) -> list[Document]:
+    def similarity_search(self, query: str, k: int, **kwargs: Any) -> list[Document]:
         """Returns the configured chunks and records the call.
 
         Args:
             query: The question to search for.
             k: Number of requested chunks.
+            **kwargs: Ignored, accepted for signature compatibility.
 
         Returns:
             At most ``k`` of the configured chunks.

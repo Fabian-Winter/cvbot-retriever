@@ -27,6 +27,8 @@ from cvbot_core.vector_store import (
 DEFAULT_AWS_REGION = "eu-central-1"
 DEFAULT_LLM_MODEL_ID = "amazon.nova-lite-v1:0"
 DEFAULT_TOP_K = 4
+DEFAULT_FILTER_OVERFETCH_FACTOR = 4
+MAX_FILTER_OVERFETCH_FACTOR = 20
 DEFAULT_MAX_CONTEXT_TOKENS = 8000
 DEFAULT_RESPONSE_TOKEN_BUFFER = 1024
 DEFAULT_WEB_HOST = "127.0.0.1"
@@ -55,6 +57,9 @@ class Settings:
         aws_region: AWS region of the Bedrock client.
         llm_model_id: Bedrock model ID used to generate the answer.
         top_k: Number of chunks retrieved per question.
+        filter_overfetch_factor: How many times ``top_k`` is fetched before
+            metadata filters re-rank the candidates. Higher values let a
+            matching chunk win from further down the similarity ranking.
         max_context_tokens: Upper bound for the whole context sent to the LLM
             (system prompt, retrieved chunks and conversation history).
         response_token_buffer: Part of ``max_context_tokens`` that is kept free
@@ -83,6 +88,7 @@ class Settings:
     aws_region: str = DEFAULT_AWS_REGION
     llm_model_id: str = DEFAULT_LLM_MODEL_ID
     top_k: int = DEFAULT_TOP_K
+    filter_overfetch_factor: int = DEFAULT_FILTER_OVERFETCH_FACTOR
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     response_token_buffer: int = DEFAULT_RESPONSE_TOKEN_BUFFER
     web_host: str = DEFAULT_WEB_HOST
@@ -108,6 +114,13 @@ class Settings:
         require_non_empty(self.aws_region, "aws_region")
         require_non_empty(self.llm_model_id, "llm_model_id")
         require_positive(self.top_k, "top_k")
+        require_positive(self.filter_overfetch_factor, "filter_overfetch_factor")
+        require_below(
+            self.filter_overfetch_factor,
+            MAX_FILTER_OVERFETCH_FACTOR,
+            "filter_overfetch_factor",
+            "the supported maximum",
+        )
         require_positive(self.max_context_tokens, "max_context_tokens")
         require_positive(self.response_token_buffer, "response_token_buffer")
         require_below(
@@ -162,6 +175,11 @@ class Settings:
             aws_region=read_str(source, "AWS_REGION", DEFAULT_AWS_REGION),
             llm_model_id=read_str(source, "LLM_MODEL_ID", DEFAULT_LLM_MODEL_ID),
             top_k=read_int(source, "TOP_K", DEFAULT_TOP_K),
+            filter_overfetch_factor=read_int(
+                source,
+                "FILTER_OVERFETCH_FACTOR",
+                DEFAULT_FILTER_OVERFETCH_FACTOR,
+            ),
             max_context_tokens=read_int(
                 source, "MAX_CONTEXT_TOKENS", DEFAULT_MAX_CONTEXT_TOKENS
             ),
