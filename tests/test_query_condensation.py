@@ -18,7 +18,7 @@ HISTORY = [
 
 SCHEMA = {
     "status": ["aktuell", "historisch"],
-    "jahre": ["2011", "2012", "2013"],
+    "years": ["2011", "2012", "2013"],
 }
 
 
@@ -81,7 +81,7 @@ def test_the_schema_is_injected_into_the_system_prompt(settings: Settings) -> No
 
     system = runtime.calls[0]["system"][0]["text"]
     assert "- status: aktuell | historisch" in system
-    assert "- jahre: 2011 | 2012 | 2013" in system
+    assert "- years: 2011 | 2012 | 2013" in system
 
 
 def test_schema_values_are_normalized_before_entering_the_prompt(
@@ -100,24 +100,24 @@ def test_schema_values_are_normalized_before_entering_the_prompt(
 
 def test_filters_are_extracted(settings: Settings) -> None:
     llm, _ = build_llm(
-        settings, '{"query": "Projekte 2013?", "filters": {"jahre": ["2013"]}}'
+        settings, '{"query": "Projekte 2013?", "filters": {"years": ["2013"]}}'
     )
 
     result = condense_and_extract(llm, [], "Was war 2013?", SCHEMA)
 
-    assert result.filters == {"jahre": ["2013"]}
+    assert result.filters == {"years": ["2013"]}
 
 
 def test_json_inside_a_code_fence_is_accepted(settings: Settings) -> None:
     llm, _ = build_llm(
         settings,
-        '```json\n{"query": "Projekte 2013?", "filters": {"jahre": ["2013"]}}\n```',
+        '```json\n{"query": "Projekte 2013?", "filters": {"years": ["2013"]}}\n```',
     )
 
     result = condense_and_extract(llm, [], "Was war 2013?", SCHEMA)
 
     assert result.query == "Projekte 2013?"
-    assert result.filters == {"jahre": ["2013"]}
+    assert result.filters == {"years": ["2013"]}
 
 
 def test_a_single_filter_value_may_be_a_string(settings: Settings) -> None:
@@ -130,12 +130,12 @@ def test_a_single_filter_value_may_be_a_string(settings: Settings) -> None:
 
 def test_ambiguous_questions_may_yield_several_values(settings: Settings) -> None:
     llm, _ = build_llm(
-        settings, '{"query": "q", "filters": {"jahre": ["2011", "2012"]}}'
+        settings, '{"query": "q", "filters": {"years": ["2011", "2012"]}}'
     )
 
     result = condense_and_extract(llm, [], "2011 oder 2012?", SCHEMA)
 
-    assert result.filters == {"jahre": ["2011", "2012"]}
+    assert result.filters == {"years": ["2011", "2012"]}
 
 
 def test_unknown_filter_field_is_dropped(settings: Settings) -> None:
@@ -149,7 +149,7 @@ def test_unknown_filter_field_is_dropped(settings: Settings) -> None:
 
 
 def test_unknown_filter_value_is_dropped(settings: Settings) -> None:
-    llm, _ = build_llm(settings, '{"query": "q", "filters": {"jahre": ["1999"]}}')
+    llm, _ = build_llm(settings, '{"query": "q", "filters": {"years": ["1999"]}}')
 
     result = condense_and_extract(llm, [], "Was war 1999?", SCHEMA)
 

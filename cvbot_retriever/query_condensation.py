@@ -76,7 +76,7 @@ weiteren Text.
 - Das Objekt hat exakt die Felder "query" (String) und "filters" (Objekt, das \
 Feldnamen auf eine Liste von Werten abbildet).
 
-Beispiel: {{"query": "Welche Projekte 2013?", "filters": {{"jahre": ["2013"]}}}}
+Beispiel: {{"query": "Welche Projekte 2013?", "filters": {{"years": ["2013"]}}}}
 """
 
 

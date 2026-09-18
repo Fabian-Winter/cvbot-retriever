@@ -207,7 +207,7 @@ def test_a_published_schema_costs_exactly_one_extra_call_on_the_first_turn(
         lambda c, name: "amazon.titan-embed-text-v2:0",
     )
     monkeypatch.setattr(
-        pipeline, "get_indexed_metadata_schema", lambda c, name: {"jahre": ["2020"]}
+        pipeline, "get_indexed_metadata_schema", lambda c, name: {"years": ["2020"]}
     )
     monkeypatch.setattr(
         pipeline,
@@ -232,7 +232,7 @@ def test_extracted_filters_overfetch_before_re_ranking(
 ) -> None:
     store = FakeStore(CHUNKS)
     runtime = FakeBedrockRuntime(
-        ['{"query": "Was 2020?", "filters": {"jahre": ["2020"]}}', ANSWER]
+        ['{"query": "Was 2020?", "filters": {"years": ["2020"]}}', ANSWER]
     )
     monkeypatch.setattr(pipeline, "create_client", lambda s: object())
     monkeypatch.setattr(
@@ -241,7 +241,7 @@ def test_extracted_filters_overfetch_before_re_ranking(
         lambda c, name: "amazon.titan-embed-text-v2:0",
     )
     monkeypatch.setattr(
-        pipeline, "get_indexed_metadata_schema", lambda c, name: {"jahre": ["2020"]}
+        pipeline, "get_indexed_metadata_schema", lambda c, name: {"years": ["2020"]}
     )
     monkeypatch.setattr(
         pipeline,
