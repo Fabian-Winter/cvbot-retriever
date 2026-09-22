@@ -128,14 +128,18 @@ def condense_and_extract(
         ).strip()
     except Exception:
         LOGGER.warning(
-            "query condensation failed, falling back to the raw question",
+            "query condensation failed, falling back to the raw question "
+            "(schema_fields=%d)",
+            len(schema),
             exc_info=True,
         )
         return CondensationResult(query=question)
 
     if not response:
         LOGGER.warning(
-            "query condensation returned no text, falling back to the raw question"
+            "query condensation returned no text, falling back to the raw "
+            "question (schema_fields=%d)",
+            len(schema),
         )
         return CondensationResult(query=question)
 
@@ -174,7 +178,17 @@ def _build_system_prompt(schema: Mapping[str, Sequence[str]]) -> str:
             normalize_value(str(value)) for value in values[:MAX_VALUES_PER_FIELD]
         ]
         lines.append(f"- {normalize_key(name)}: {' | '.join(rendered)}")
-    return EXTRACTION_SYSTEM_PROMPT_TEMPLATE.format(schema_block="\n".join(lines))
+    prompt = EXTRACTION_SYSTEM_PROMPT_TEMPLATE.format(
+        schema_block="\n".join(lines)
+    )
+
+    LOGGER.debug(
+        "condensation system prompt: fields=%d, prompt_len=%d, schema_block=%r",
+        len(lines),
+        len(prompt),
+        _to_log_line("\n".join(lines)),
+    )
+    return prompt
 
 
 def _parse_response(
@@ -193,7 +207,13 @@ def _parse_response(
     """
     payload = _load_json_object(text)
     if payload is None:
-        LOGGER.warning("condensation response was not JSON, using the raw question")
+        LOGGER.warning(
+            "condensation response was not JSON, using the raw question "
+            "(schema_fields=%d, raw_len=%d, raw=%r)",
+            len(schema),
+            len(text),
+            _to_log_line(text),
+        )
         return CondensationResult(query=question)
 
     query = payload.get("query")
@@ -222,13 +242,45 @@ def _load_json_object(text: str) -> dict[str, object] | None:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end <= start:
+        LOGGER.debug(
+            "no JSON object bounds in condensation response "
+            "(start=%d, end=%d, text=%r)",
+            start,
+            end,
+            _to_log_line(text),
+        )
         return None
 
+    span = text[start : end + 1]
     try:
-        payload = json.loads(text[start : end + 1])
-    except ValueError:
+        payload = json.loads(span)
+    except ValueError as exc:
+        # The span between the outermost braces is what actually failed to
+        # parse; logging it shows whether prose or a truncated object sits in
+        # it, which the plain "was not JSON" warning cannot convey.
+        LOGGER.debug(
+            "condensation JSON span failed to parse (%s); span=%r",
+            exc,
+            _to_log_line(span),
+        )
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _to_log_line(text: str, limit: int = 400) -> str:
+    """Collapses whitespace and truncates text for a single log line.
+
+    Args:
+        text: The text to summarise.
+        limit: Maximum number of characters to keep.
+
+    Returns:
+        The whitespace-collapsed, possibly truncated text.
+    """
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[:limit] + "…"
 
 
 def _validate_filters(

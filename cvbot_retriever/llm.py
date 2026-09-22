@@ -79,7 +79,45 @@ class BedrockLLMClient:
             "invoking %s with %d message(s)", self._model_id, len(messages)
         )
         response = self._client.converse(**request)
+        _log_response(response)
         return _extract_text(response)
+
+
+def _log_response(response: dict[str, Any]) -> None:
+    """Logs the Converse response for diagnosis.
+
+    Args:
+        response: The response returned by the Converse API.
+    """
+    try:
+        message = response.get("output", {}).get("message", {})
+        content = message.get("content") or []
+        block_types = sorted(
+            {
+                key
+                for block in content
+                if isinstance(block, dict)
+                for key in block
+                if key != "text"
+            }
+        )
+        text = _extract_text(response)
+        stop_reason = message.get("stopReason", "")
+        usage = response.get("usage", {})
+        LOGGER.debug(
+            "bedrock response:"
+            "stop_reason=%s block_types=%s tokens=%s/%s text_len=%d"
+            "text=%r",
+            stop_reason or "?",
+            ",".join(block_types) or "text",
+            usage.get("inputTokens", "?"),
+            usage.get("outputTokens", "?"),
+            len(text),
+            " ".join(text.split()),
+        )
+    except Exception:
+        # Diagnosis must never be the reason a request fails.
+        LOGGER.debug("could not log bedrock response shape", exc_info=True)
 
 
 def _extract_text(response: dict[str, Any]) -> str:
