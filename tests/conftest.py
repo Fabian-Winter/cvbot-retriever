@@ -41,15 +41,28 @@ class FakeStore:
 
 
 class FakeBedrockRuntime:
-    """Bedrock runtime double that records ``converse`` calls."""
+    """Bedrock runtime double that records ``converse`` calls.
 
-    def __init__(self, texts: list[str] | None = None) -> None:
+    Answers with text blocks by default. When ``tool_calls`` is given, each
+    call consumes the next entry and answers with a ``toolUse`` block in the
+    shape of the Converse API instead.
+    """
+
+    def __init__(
+        self,
+        texts: list[str] | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Initializes the client.
 
         Args:
             texts: Text blocks the model answers with.
+            tool_calls: Tool invocations the model answers with, each a
+                mapping with ``name`` and ``input``. Consumed in order; once
+                exhausted, the double falls back to ``texts``.
         """
         self.texts = list(texts) if texts is not None else ["A fake answer."]
+        self.tool_calls = list(tool_calls) if tool_calls is not None else []
         self.calls: list[dict[str, Any]] = []
 
     def converse(self, **kwargs: Any) -> dict[str, Any]:
@@ -62,6 +75,26 @@ class FakeBedrockRuntime:
             A response in the shape of the Converse API.
         """
         self.calls.append(kwargs)
+        if self.tool_calls:
+            tool_call = self.tool_calls.pop(0)
+            return {
+                "output": {
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "toolUse": {
+                                    "toolUseId": f"tooluse_{len(self.calls)}",
+                                    "name": tool_call.get("name", ""),
+                                    "input": tool_call.get("input", {}),
+                                }
+                            }
+                        ],
+                        "stopReason": "tool_use",
+                    }
+                },
+                "stopReason": "tool_use",
+            }
         return {
             "output": {
                 "message": {

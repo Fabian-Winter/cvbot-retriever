@@ -7,17 +7,19 @@ dedicated, small model call before the question is embedded for retrieval.
 
 The same call also extracts metadata filters, because the model already has
 the history and the schema in front of it. Splitting this into a second call
-would double latency and cost for the same information. Everything the model
-returns is validated against the schema afterwards, so an invented field or
-value is dropped instead of reaching the vector store.
+would double latency and cost for the same information. With a schema to
+filter on, the answer is forced through a tool call, so the model cannot
+answer in free-form prose; everything it returns is validated against the
+schema afterwards, so an invented field or value is dropped instead of reaching
+the vector store.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from cvbot_core.metadata import (
     MAX_SCHEMA_FIELDS,
@@ -27,7 +29,7 @@ from cvbot_core.metadata import (
 )
 
 from .conversation import ROLE_USER, Message
-from .llm import BedrockLLMClient
+from .llm import BedrockLLMClient, ToolCall
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,18 +68,60 @@ Regeln für die Filter:
 Werte wortgleich.
 - Du erfindest keine Felder und keine Werte und rätst nicht. Im Zweifel lässt \
 du das Feld weg.
-- Erkennst du kein Filterkriterium, gibst du ein leeres Objekt aus.
+- Erkennst du kein Filterkriterium, übergibst du ein leeres Objekt.
 - Ist die Nachricht mehrdeutig, nennst du mehrere Werte im selben Feld; sie \
 werden als Oder-Verknüpfung behandelt.
 
-Ausgabeformat:
-- Du gibst genau ein JSON-Objekt aus, ohne Code-Fence, ohne Erklärung und ohne \
-weiteren Text.
-- Das Objekt hat exakt die Felder "query" (String) und "filters" (Objekt, das \
-Feldnamen auf eine Liste von Werten abbildet).
-
-Beispiel: {{"query": "Welche Projekte 2013?", "filters": {{"years": ["2013"]}}}}
+Rufe abschließend das Werkzeug "{tool_name}" auf und übergib die Suchanfrage \
+als "query" und die Filter als "filters". Mache das immer, unabhängig vom \
+Inhalt der Nachricht.
 """
+
+# Name of the tool whose forced call carries the structured answer.
+FILTER_TOOL_NAME = "extract_query_filters"
+
+# The schema of the tool input. The filter values themselves cannot be part
+# of it: they come from the indexed documents and change with every rebuild,
+# so they are only listed in the system prompt and validated afterwards.
+_FILTER_TOOL_CONFIG: dict[str, Any] = {
+    "tools": [
+        {
+            "toolSpec": {
+                "name": FILTER_TOOL_NAME,
+                "description": (
+                    "Übergibt die eigenständige Suchanfrage und die dazu "
+                    "gehörigen Metadatenfilter für die Dokumentensuche."
+                ),
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": (
+                                    "Die ohne den Gesprächsverlauf "
+                                    "verständliche Suchanfrage."
+                                ),
+                            },
+                            "filters": {
+                                "type": "object",
+                                "description": (
+                                    "Metadatenfelder, die auf eine Liste von "
+                                    "Werten abbilden. Leeres Objekt, wenn die "
+                                    "Nachricht kein Filterkriterium enthält."
+                                ),
+                            },
+                        },
+                        "required": ["query", "filters"],
+                    }
+                },
+            }
+        }
+    ],
+    # "any" forces the model to call this tool instead of answering in prose,
+    # which is what keeps the structured output reliable.
+    "toolChoice": {"any": {}},
+}
 
 
 @dataclass(frozen=True)
@@ -104,8 +148,10 @@ def condense_and_extract(
 
     Skips the extra model call when there is no history and no schema, since a
     first question is already standalone and there is nothing to filter on.
-    Falls back to the original question with empty filters if the call fails or
-    returns nothing usable, so retrieval never breaks because of this step.
+    With a schema, the model is forced to answer through a tool call, so the
+    structured result cannot degrade into prose. Falls back to the original
+    question with empty filters if the call fails or returns nothing usable,
+    so retrieval never breaks because of this step.
 
     Args:
         llm: Client used for the extra, dedicated model call.
@@ -121,32 +167,10 @@ def condense_and_extract(
     if not history and not schema:
         return CondensationResult(query=question)
 
-    try:
-        messages = [*history, Message(role=ROLE_USER, content=question)]
-        response = llm.generate(
-            messages, system=_build_system_prompt(schema)
-        ).strip()
-    except Exception:
-        LOGGER.warning(
-            "query condensation failed, falling back to the raw question "
-            "(schema_fields=%d)",
-            len(schema),
-            exc_info=True,
-        )
-        return CondensationResult(query=question)
-
-    if not response:
-        LOGGER.warning(
-            "query condensation returned no text, falling back to the raw "
-            "question (schema_fields=%d)",
-            len(schema),
-        )
-        return CondensationResult(query=question)
-
     result = (
-        _parse_response(response, question, schema)
+        _extract_with_tool(llm, history, question, schema)
         if schema
-        else CondensationResult(query=response)
+        else _condense_plain_text(llm, history, question)
     )
     LOGGER.info(
         "condensed question for retrieval: %r -> %r, filters=%r",
@@ -155,6 +179,120 @@ def condense_and_extract(
         result.filters,
     )
     return result
+
+
+def _condense_plain_text(
+    llm: BedrockLLMClient, history: Sequence[Message], question: str
+) -> CondensationResult:
+    """Condenses a question without filters through a plain-text answer.
+
+    Args:
+        llm: Client used for the model call.
+        history: The conversation so far, without the current question.
+        question: The current user question, used as the fallback query.
+
+    Returns:
+        The condensed question, or the unchanged question if the call fails
+        or returns nothing.
+    """
+    try:
+        messages = [*history, Message(role=ROLE_USER, content=question)]
+        response = llm.generate(
+            messages, system=CONDENSATION_SYSTEM_PROMPT
+        ).strip()
+    except Exception:
+        LOGGER.warning(
+            "query condensation failed, falling back to the raw question",
+            exc_info=True,
+        )
+        return CondensationResult(query=question)
+
+    if not response:
+        LOGGER.warning(
+            "query condensation returned no text, falling back to the raw "
+            "question"
+        )
+        return CondensationResult(query=question)
+
+    return CondensationResult(query=response)
+
+
+def _extract_with_tool(
+    llm: BedrockLLMClient,
+    history: Sequence[Message],
+    question: str,
+    schema: Mapping[str, Sequence[str]],
+) -> CondensationResult:
+    """Condenses a question and extracts filters through a forced tool call.
+
+    Args:
+        llm: Client used for the model call.
+        history: The conversation so far, without the current question.
+        question: The current user question, used as the fallback query.
+        schema: Filterable fields mapped onto their known values.
+
+    Returns:
+        The result of the tool call, or the unchanged question with empty
+        filters if the call fails or the model does not use the tool.
+    """
+    fallback = CondensationResult(query=question)
+    try:
+        messages = [*history, Message(role=ROLE_USER, content=question)]
+        tool_call = llm.generate_tool_call(
+            messages,
+            system=_build_system_prompt(schema),
+            tool_config=_FILTER_TOOL_CONFIG,
+        )
+    except Exception:
+        LOGGER.warning(
+            "query condensation failed, falling back to the raw question "
+            "(schema_fields=%d)",
+            len(schema),
+            exc_info=True,
+        )
+        return fallback
+
+    if tool_call is None:
+        LOGGER.warning(
+            "condensation model ignored the forced filter tool, falling back "
+            "to the raw question (schema_fields=%d)",
+            len(schema),
+        )
+        return fallback
+    if tool_call.name != FILTER_TOOL_NAME:
+        LOGGER.warning(
+            "condensation model called the unknown tool %r, falling back to "
+            "the raw question",
+            tool_call.name,
+        )
+        return fallback
+
+    return _result_from_tool_call(tool_call, question, schema)
+
+
+def _result_from_tool_call(
+    tool_call: ToolCall, question: str, schema: Mapping[str, Sequence[str]]
+) -> CondensationResult:
+    """Turns the input of the filter tool call into a validated result.
+
+    Args:
+        tool_call: The tool call the model produced.
+        question: The original question, used as the fallback query.
+        schema: Filterable fields mapped onto their known values.
+
+    Returns:
+        The validated result; the unchanged question wherever the tool input
+        has no usable value.
+    """
+    query = tool_call.input.get("query")
+    if not isinstance(query, str) or not query.strip():
+        LOGGER.warning("filter tool call had no usable query")
+        query = question
+
+    return CondensationResult(
+        query=query.strip(),
+        filters=_validate_filters(tool_call.input.get("filters"), schema),
+    )
 
 
 def _build_system_prompt(schema: Mapping[str, Sequence[str]]) -> str:
@@ -179,7 +317,7 @@ def _build_system_prompt(schema: Mapping[str, Sequence[str]]) -> str:
         ]
         lines.append(f"- {normalize_key(name)}: {' | '.join(rendered)}")
     prompt = EXTRACTION_SYSTEM_PROMPT_TEMPLATE.format(
-        schema_block="\n".join(lines)
+        schema_block="\n".join(lines), tool_name=FILTER_TOOL_NAME
     )
 
     LOGGER.debug(
@@ -189,82 +327,6 @@ def _build_system_prompt(schema: Mapping[str, Sequence[str]]) -> str:
         _to_log_line("\n".join(lines)),
     )
     return prompt
-
-
-def _parse_response(
-    text: str, question: str, schema: Mapping[str, Sequence[str]]
-) -> CondensationResult:
-    """Reads query and filters out of the model response.
-
-    Args:
-        text: The raw model output.
-        question: The original question, used as the fallback query.
-        schema: Filterable fields mapped onto their known values.
-
-    Returns:
-        The parsed result, or the unchanged question with empty filters if the
-        response is not usable.
-    """
-    payload = _load_json_object(text)
-    if payload is None:
-        LOGGER.warning(
-            "condensation response was not JSON, using the raw question "
-            "(schema_fields=%d, raw_len=%d, raw=%r)",
-            len(schema),
-            len(text),
-            _to_log_line(text),
-        )
-        return CondensationResult(query=question)
-
-    query = payload.get("query")
-    if not isinstance(query, str) or not query.strip():
-        LOGGER.warning("condensation response had no usable query")
-        query = question
-
-    return CondensationResult(
-        query=query.strip(),
-        filters=_validate_filters(payload.get("filters"), schema),
-    )
-
-
-def _load_json_object(text: str) -> dict[str, object] | None:
-    """Extracts the JSON object out of a model response.
-
-    Tolerates a surrounding code fence or stray prose, since the model is
-    instructed but not forced to answer with bare JSON.
-
-    Args:
-        text: The raw model output.
-
-    Returns:
-        The decoded object, or ``None`` if none could be read.
-    """
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end <= start:
-        LOGGER.debug(
-            "no JSON object bounds in condensation response "
-            "(start=%d, end=%d, text=%r)",
-            start,
-            end,
-            _to_log_line(text),
-        )
-        return None
-
-    span = text[start : end + 1]
-    try:
-        payload = json.loads(span)
-    except ValueError as exc:
-        # The span between the outermost braces is what actually failed to
-        # parse; logging it shows whether prose or a truncated object sits in
-        # it, which the plain "was not JSON" warning cannot convey.
-        LOGGER.debug(
-            "condensation JSON span failed to parse (%s); span=%r",
-            exc,
-            _to_log_line(span),
-        )
-        return None
-    return payload if isinstance(payload, dict) else None
 
 
 def _to_log_line(text: str, limit: int = 400) -> str:

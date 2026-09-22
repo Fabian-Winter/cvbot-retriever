@@ -199,7 +199,15 @@ def test_a_published_schema_costs_exactly_one_extra_call_on_the_first_turn(
     fake_embeddings: FakeEmbeddings,
 ) -> None:
     store = FakeStore(CHUNKS)
-    runtime = FakeBedrockRuntime(['{"query": "Was 2020?", "filters": {}}', ANSWER])
+    runtime = FakeBedrockRuntime(
+        [ANSWER],
+        tool_calls=[
+            {
+                "name": "extract_query_filters",
+                "input": {"query": "Was 2020?", "filters": {}},
+            }
+        ],
+    )
     monkeypatch.setattr(pipeline, "create_client", lambda s: object())
     monkeypatch.setattr(
         pipeline,
@@ -232,7 +240,13 @@ def test_extracted_filters_overfetch_before_re_ranking(
 ) -> None:
     store = FakeStore(CHUNKS)
     runtime = FakeBedrockRuntime(
-        ['{"query": "Was 2020?", "filters": {"years": ["2020"]}}', ANSWER]
+        [ANSWER],
+        tool_calls=[
+            {
+                "name": "extract_query_filters",
+                "input": {"query": "Was 2020?", "filters": {"years": ["2020"]}},
+            }
+        ],
     )
     monkeypatch.setattr(pipeline, "create_client", lambda s: object())
     monkeypatch.setattr(

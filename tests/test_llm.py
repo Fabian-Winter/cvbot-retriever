@@ -84,6 +84,60 @@ def test_generate_joins_multiple_text_blocks(settings: Settings) -> None:
     assert client.generate([QUESTION], SYSTEM) == "First part.\nSecond part."
 
 
+TOOL_CONFIG = {
+    "tools": [{"toolSpec": {"name": "my_tool", "inputSchema": {"json": {}}}}],
+    "toolChoice": {"any": {}},
+}
+
+
+def test_generate_tool_call_sends_the_tool_config(settings: Settings) -> None:
+    runtime = FakeBedrockRuntime(
+        tool_calls=[{"name": "my_tool", "input": {"query": "q"}}]
+    )
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG)
+
+    [request] = runtime.calls
+    assert request["toolConfig"] == TOOL_CONFIG
+    assert request["system"] == [{"text": SYSTEM}]
+
+
+def test_generate_tool_call_returns_the_tool_use_block(settings: Settings) -> None:
+    runtime = FakeBedrockRuntime(
+        tool_calls=[{"name": "my_tool", "input": {"query": "q", "filters": {}}}]
+    )
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    call = client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG)
+
+    assert call is not None
+    assert call.name == "my_tool"
+    assert call.input == {"query": "q", "filters": {}}
+    assert call.tool_use_id
+
+
+def test_generate_tool_call_returns_none_for_a_text_answer(
+    settings: Settings,
+) -> None:
+    runtime = FakeBedrockRuntime(["Just prose."])
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    assert client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG) is None
+
+
+def test_generate_tool_call_tolerates_a_non_mapping_input(
+    settings: Settings,
+) -> None:
+    runtime = FakeBedrockRuntime(tool_calls=[{"name": "my_tool", "input": None}])
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    call = client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG)
+
+    assert call is not None
+    assert call.input == {}
+
+
 @pytest.mark.parametrize("system", ["", "   "])
 def test_empty_system_prompt_raises(settings: Settings, system: str) -> None:
     client = llm.BedrockLLMClient(settings, client=FakeBedrockRuntime())

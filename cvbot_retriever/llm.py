@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 import boto3
@@ -12,6 +13,22 @@ from .config import Settings
 from .conversation import ROLE_USER, Message
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """A tool invocation the model requested through the Converse API.
+
+    Attributes:
+        name: Name of the tool the model called.
+        tool_use_id: Converse identifier of this invocation.
+        input: The tool input the model generated, already parsed into a
+            mapping by the SDK. Empty when the model sent no usable input.
+    """
+
+    name: str
+    tool_use_id: str
+    input: dict[str, Any] = field(default_factory=dict)
 
 
 class BedrockLLMClient:
@@ -62,6 +79,62 @@ class BedrockLLMClient:
             ValueError: If the system prompt is empty, if no message is given
                 or if the last one is not a user turn.
         """
+        text, _ = self._converse(messages, system)
+        return text
+
+    def generate_tool_call(
+        self,
+        messages: Sequence[Message],
+        system: str,
+        tool_config: dict[str, Any],
+    ) -> ToolCall | None:
+        """Sends a conversation that forces the model to call a tool.
+
+        Used where the answer must be structured: with ``toolChoice`` set to
+        ``any``, the model cannot reply with free text and has to fill the
+        tool's input schema instead, which the Converse API returns already
+        parsed. The caller is responsible for validating the input, since the
+        schema can only describe the shape, not the allowed values.
+
+        Args:
+            messages: The turns of the conversation in chronological order,
+                ending with the current user message.
+            system: The system prompt, sent as a separate Converse block.
+            tool_config: The ``toolConfig`` block of the Converse request,
+                holding the tool definitions and the tool choice.
+
+        Returns:
+            The tool call the model requested, or ``None`` if the response
+            carried no usable tool use despite the forced tool choice.
+
+        Raises:
+            ValueError: If the system prompt is empty, if no message is given
+                or if the last one is not a user turn.
+        """
+        _, response = self._converse(messages, system, tool_config=tool_config)
+        return _extract_tool_call(response)
+
+    def _converse(
+        self,
+        messages: Sequence[Message],
+        system: str,
+        tool_config: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Runs a Converse request and returns text plus raw response.
+
+        Args:
+            messages: The turns of the conversation, ending with a user turn.
+            system: The system prompt.
+            tool_config: Optional ``toolConfig`` block forcing tool use.
+
+        Returns:
+            The generated text and the untouched Converse response, so that
+            callers can look for content blocks the text extraction ignores.
+
+        Raises:
+            ValueError: If the system prompt is empty, if no message is given
+                or if the last one is not a user turn.
+        """
         if not system.strip():
             raise ValueError("system prompt must not be empty")
         if not messages:
@@ -74,13 +147,18 @@ class BedrockLLMClient:
             "messages": [message.to_converse() for message in messages],
             "system": [{"text": system}],
         }
+        if tool_config is not None:
+            request["toolConfig"] = tool_config
 
         LOGGER.debug(
-            "invoking %s with %d message(s)", self._model_id, len(messages)
+            "invoking %s with %d message(s), tool_config=%s",
+            self._model_id,
+            len(messages),
+            tool_config is not None,
         )
         response = self._client.converse(**request)
         _log_response(response)
-        return _extract_text(response)
+        return _extract_text(response), response
 
 
 def _log_response(response: dict[str, Any]) -> None:
@@ -131,3 +209,27 @@ def _extract_text(response: dict[str, Any]) -> str:
     """
     content = response["output"]["message"]["content"]
     return "\n".join(block["text"] for block in content if "text" in block)
+
+
+def _extract_tool_call(response: dict[str, Any]) -> ToolCall | None:
+    """Reads the first tool use block out of a Converse response.
+
+    Args:
+        response: The response returned by the Converse API.
+
+    Returns:
+        The requested tool call, or ``None`` if the answer holds no tool use
+        block or its input is not a mapping.
+    """
+    content = response.get("output", {}).get("message", {}).get("content") or []
+    for block in content:
+        tool_use = block.get("toolUse") if isinstance(block, dict) else None
+        if not tool_use:
+            continue
+        tool_input = tool_use.get("input")
+        return ToolCall(
+            name=str(tool_use.get("name", "")),
+            tool_use_id=str(tool_use.get("toolUseId", "")),
+            input=tool_input if isinstance(tool_input, dict) else {},
+        )
+    return None
