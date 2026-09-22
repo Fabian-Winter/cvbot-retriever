@@ -91,7 +91,7 @@ usually only `CHROMA_HOST` needs to be set.
 | `CHROMA_PORT` | `8000` | Port of the ChromaDB |
 | `CHROMA_COLLECTION` | `cvbot_documents` | Name of the collection |
 | `AWS_REGION` | `eu-central-1` | Region of the Bedrock client |
-| `LLM_MODEL_ID` | `amazon.nova-lite-v1:0` | Bedrock model ID for the answer |
+| `LLM_MODEL_ID` | `eu.amazon.nova-2-lite-v1:0` | Bedrock model ID for the answer |
 | `TOP_K` | `4` | Number of chunks retrieved per question |
 | `FILTER_OVERFETCH_FACTOR` | `4` | How many times `TOP_K` is fetched before metadata filters re-rank the candidates |
 | `MAX_CONTEXT_TOKENS` | `8000` | Upper bound for the whole context sent to the LLM |

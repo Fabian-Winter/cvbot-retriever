@@ -25,7 +25,7 @@ from cvbot_core.vector_store import (
 )
 
 DEFAULT_AWS_REGION = "eu-central-1"
-DEFAULT_LLM_MODEL_ID = "amazon.nova-lite-v1:0"
+DEFAULT_LLM_MODEL_ID = "eu.amazon.nova-2-lite-v1:0"
 DEFAULT_TOP_K = 4
 DEFAULT_FILTER_OVERFETCH_FACTOR = 4
 MAX_FILTER_OVERFETCH_FACTOR = 20
