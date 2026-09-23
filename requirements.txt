@@ -1,4 +1,4 @@
-cvbot-core @ https://github.com/Fabian-Winter/cvbot-core/archive/refs/tags/v0.1.4.tar.gz
+cvbot-core @ https://github.com/Fabian-Winter/cvbot-core/archive/refs/tags/v0.1.5.tar.gz
 langchain-core
 langchain-aws
 langchain-chroma

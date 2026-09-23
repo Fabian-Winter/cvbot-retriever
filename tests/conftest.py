@@ -14,19 +14,37 @@ from cvbot_retriever.pipeline import AnswerResult
 
 
 class FakeStore:
-    """Vector store double that records the queries it receives."""
+    """Vector store double that records the queries it receives.
 
-    def __init__(self, documents: list[Document] | None = None) -> None:
+    The documents are returned in the given order with increasing distances, so
+    that the first document is the closest match unless a test provides its own
+    ``distances``.
+    """
+
+    def __init__(
+        self,
+        documents: list[Document] | None = None,
+        distances: list[float] | None = None,
+    ) -> None:
         """Initializes the store.
 
         Args:
             documents: Chunks returned by every similarity search.
+            distances: Distance per document; defaults to ``0.1``, ``0.2``, ...
+                in the order of the documents.
         """
         self.documents = list(documents or ())
+        self.distances = (
+            list(distances)
+            if distances is not None
+            else [0.1 * (index + 1) for index in range(len(self.documents))]
+        )
         self.queries: list[tuple[str, int]] = []
 
-    def similarity_search(self, query: str, k: int, **kwargs: Any) -> list[Document]:
-        """Returns the configured chunks and records the call.
+    def similarity_search_with_score(
+        self, query: str, k: int, **kwargs: Any
+    ) -> list[tuple[Document, float]]:
+        """Returns the configured chunks with their distances.
 
         Args:
             query: The question to search for.
@@ -34,10 +52,10 @@ class FakeStore:
             **kwargs: Ignored, accepted for signature compatibility.
 
         Returns:
-            At most ``k`` of the configured chunks.
+            At most ``k`` of the configured chunks, each with its distance.
         """
         self.queries.append((query, k))
-        return self.documents[:k]
+        return list(zip(self.documents[:k], self.distances[:k], strict=True))
 
 
 class FakeBedrockRuntime:

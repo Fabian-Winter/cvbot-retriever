@@ -230,7 +230,9 @@ def test_a_published_schema_costs_exactly_one_extra_call_on_the_first_turn(
     pipeline.ConversationEngine(settings).answer("c1", "Was war 2020?")
 
     assert len(runtime.calls) == 2
-    assert store.queries == [("Was 2020?", settings.top_k)]
+    assert store.queries == [
+        ("Was 2020?", settings.top_k * settings.overfetch_factor)
+    ]
 
 
 def test_extracted_filters_overfetch_before_re_ranking(
@@ -266,7 +268,7 @@ def test_extracted_filters_overfetch_before_re_ranking(
     monkeypatch.setattr(
         pipeline, "BedrockLLMClient", lambda s: BedrockLLMClient(s, client=runtime)
     )
-    tuned = settings.with_overrides(top_k=2, filter_overfetch_factor=3)
+    tuned = settings.with_overrides(top_k=2, overfetch_factor=3)
 
     pipeline.ConversationEngine(tuned).answer("c1", "Was war 2020?")
 

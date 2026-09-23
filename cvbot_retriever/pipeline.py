@@ -105,8 +105,9 @@ class ConversationEngine:
         dedicated model call resolves references to earlier turns (e.g. "und
         davor?") and extracts metadata filters from the question, while the
         model that generates the answer still sees the original wording. The
-        filters only re-rank the candidates, so a question without any
-        filterable criterion behaves exactly like a plain semantic search.
+        retrieved candidates are re-ranked by similarity, matching metadata
+        filters and the recency of the section, so newer information surfaces
+        above older without ever excluding anything.
 
         Args:
             conversation_id: Identifier of the conversation.
@@ -129,7 +130,10 @@ class ConversationEngine:
             condensed.query,
             self._settings.top_k,
             filters=condensed.filters,
-            overfetch_factor=self._settings.filter_overfetch_factor,
+            overfetch_factor=self._settings.overfetch_factor,
+            filter_weight=self._settings.filter_weight,
+            recency_weight=self._settings.recency_weight,
+            recency_window_years=self._settings.recency_window_years,
         )
         current = Message(
             role=ROLE_USER, content=build_user_message(question, chunks)
