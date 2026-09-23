@@ -71,7 +71,7 @@ def test_a_boosted_chunk_from_the_overfetch_wins_a_slot() -> None:
     store.documents[2].metadata.update({"status": "aktuell"})
 
     result = retrieve(
-        store, "Frage?", 2, RankingConfig(filter_weight=0.5), {"status": ["aktuell"]}
+        store, "Frage?", 2, RankingConfig(filter_weight=0.5), boost={"status": ["aktuell"]}
     )
 
     assert [chunk.page_content for chunk in result] == ["Treffer.", "A."]
