@@ -21,6 +21,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.cors import CORSMiddleware
 
@@ -41,6 +42,7 @@ from .schemas import (
 LOGGER = logging.getLogger(__name__)
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 
 KNOWLEDGE_BASE_UNAVAILABLE = (
     "Die Wissensdatenbank ist derzeit nicht erreichbar. "
@@ -235,6 +237,10 @@ def create_app(
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
     app = FastAPI(title="cvbot", docs_url="/api/docs", redoc_url=None)
+
+    # Vendored client libraries (marked, DOMPurify) for Markdown rendering in
+    # the chat page. Served as plain files, so no API surface is added.
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # An empty allow list emits no CORS headers at all, which keeps the JSON
     # API same-origin unless origins are configured explicitly.

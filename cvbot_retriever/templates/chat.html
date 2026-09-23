@@ -65,6 +65,36 @@
     border: 1px solid var(--border);
     border-bottom-left-radius: 4px;
   }
+  .msg.assistant > :first-child { margin-top: 0; }
+  .msg.assistant > :last-child { margin-bottom: 0; }
+  .msg.assistant p { margin: 0 0 .6em; }
+  .msg.assistant ul,
+  .msg.assistant ol { margin: 0 0 .6em; padding-left: 1.4em; }
+  .msg.assistant li { margin: 2px 0; }
+  .msg.assistant h1,
+  .msg.assistant h2,
+  .msg.assistant h3 { margin: 0 0 .5em; font-size: 1em; }
+  .msg.assistant code {
+    font: .9em ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #ececf0;
+    padding: 1px 5px;
+    border-radius: 5px;
+  }
+  .msg.assistant pre {
+    margin: 0 0 .6em;
+    padding: 10px 12px;
+    background: #ececf0;
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  .msg.assistant pre code { background: none; padding: 0; }
+  .msg.assistant blockquote {
+    margin: 0 0 .6em;
+    padding-left: 12px;
+    border-left: 3px solid var(--border);
+    color: var(--muted);
+  }
+  .msg.assistant a { color: var(--accent); }
   .msg.error {
     align-self: flex-start;
     background: #fdeceb;
@@ -119,13 +149,7 @@
 
   <div id="log" role="log" aria-live="polite">
     {% for message in messages %}
-      <div class="msg {{ message.role }}">
-        {% if message.role == "assistant" %}
-          {{ message.content | safe }}
-        {% else %}
-          {{ message.content }}
-        {% endif %}
-      </div>
+      <div class="msg {{ message.role }}"{% if message.role == "assistant" %} data-md{% endif %}>{{ message.content }}</div>
     {% else %}
       <p class="empty">Stelle die erste Frage, um das Gespräch zu beginnen.</p>
     {% endfor %}
@@ -153,7 +177,18 @@
   </footer>
 </main>
 
+<script src="/static/marked.min.js"></script>
+<script src="/static/purify.min.js"></script>
 <script>
+  marked.setOptions({ gfm: true, breaks: true });
+
+  function renderMarkdown(text) {
+    // Assistant answers arrive as Markdown; marked turns them into HTML and
+    // DOMPurify strips everything the model should never have produced
+    // (scripts, event handlers, inline styles).
+    return DOMPurify.sanitize(marked.parse(text));
+  }
+
   const conversationId = {{ conversation_id | tojson }};
   const endpoint = `/api/conversations/${conversationId}/messages`;
   const log = document.getElementById("log");
@@ -166,14 +201,14 @@
     if (empty) empty.remove();
     const node = document.createElement("div");
     node.className = `msg ${role}`;
-    if (role === "assistant") {
-      node.innerHTML = text;
-    } else {
-      node.textContent = text;
-    }
+    node.textContent = text;
     log.appendChild(node);
     log.scrollTop = log.scrollHeight;
     return node;
+  }
+
+  function render(node) {
+    node.innerHTML = renderMarkdown(node.textContent);
   }
 
   async function ask(question) {
@@ -200,7 +235,8 @@
     const pending = append("assistant", "…");
 
     try {
-      pending.innerHTML = await ask(question);
+      pending.textContent = await ask(question);
+      render(pending);
     } catch (error) {
       pending.className = "msg error";
       pending.textContent = error.message;
@@ -217,6 +253,9 @@
       form.requestSubmit();
     }
   });
+
+  // The server put the history into the page as escaped Markdown.
+  document.querySelectorAll(".msg[data-md]").forEach(render);
 
   log.scrollTop = log.scrollHeight;
   input.focus();

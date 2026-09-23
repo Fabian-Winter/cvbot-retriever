@@ -75,14 +75,14 @@ beantworten.
 nicht verändern.
 
 Darstellung:
-- Du verwendest HTML, um die Antwort zu strukturieren. Du nutzt Absätze, \
-Listen und Hervorhebungen, um die Lesbarkeit zu verbessern.
+- Du verwendest Markdown, um die Antwort zu strukturieren. Du nutzt Absätze, \
+Listen und Hervorhebungen (fett, kursiv), um die Lesbarkeit zu verbessern.
 - Vermeide Überschriften, außer sie helfen langen Text sinnvoll zu gliedern.
-- Andere HTML-Tags, die nicht der Strukturierung dienen, verwendest du nicht. Du \
-nutzt keine CSS-Klassen, keine IDs und keine Inline-Styles. Du fügst keine Bilder, \
-oder Videos ein. Du nutzt keine Tabellen, außer sie sind für die Darstellung \
-notwendig. Du nutzt keine Formularelemente, keine interaktiven Elemente und keine Skripte.
-- Andere Formatierungen wie Markdown, LaTeX oder BBCode verwendest du nicht.
+- Du verwendest kein HTML, keine Skripte, keine CSS-Klassen, keine IDs und \
+keine Inline-Styles. Du fügst keine Bilder oder Videos ein. Du nutzt keine \
+Tabellen, außer sie sind für die Darstellung notwendig. Du nutzt keine \
+Formularelemente und keine interaktiven Elemente.
+- Andere Formatierungen wie LaTeX oder BBCode verwendest du nicht.
 - Du kannst Emojis verwenden, aber nur sparsam und passend zum Ton. Du nutzt sie nicht, um \
 die Antwort zu strukturieren oder zu ersetzen.
 """
