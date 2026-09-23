@@ -147,12 +147,13 @@ class CondensationResult:
 
     Attributes:
         query: The standalone question used for the semantic search.
-        filters: Metadata fields mapped onto the values to boost, already
+        boost: Metadata fields mapped onto the values to boost, already
             validated against the schema. Empty when nothing was extracted.
+            The values never exclude a chunk; they only raise its ranking.
     """
 
     query: str
-    filters: dict[str, list[str]] = field(default_factory=dict)
+    boost: dict[str, list[str]] = field(default_factory=dict)
 
 
 def condense_and_extract(
@@ -190,10 +191,10 @@ def condense_and_extract(
         else _condense_plain_text(llm, history, question)
     )
     LOGGER.info(
-        "condensed question for retrieval: %r -> %r, filters=%r",
+        "condensed question for retrieval: %r -> %r, boost=%r",
         question,
         result.query,
-        result.filters,
+        result.boost,
     )
     return result
 
@@ -311,7 +312,7 @@ def _result_from_tool_call(
 
     # Logged before validation: an empty result in the info log is ambiguous,
     # and only this line tells whether the model sent nothing or the
-    # validation in _validate_filters dropped everything.
+    # validation in _validate_boost dropped everything.
     LOGGER.debug(
         "raw filter tool input: query=%r filters=%r",
         tool_call.input.get("query"),
@@ -320,7 +321,7 @@ def _result_from_tool_call(
 
     return CondensationResult(
         query=query.strip(),
-        filters=_validate_filters(tool_call.input.get("filters"), schema),
+        boost=_validate_boost(tool_call.input.get("filters"), schema),
     )
 
 
@@ -374,20 +375,20 @@ def _to_log_line(text: str, limit: int = 400) -> str:
     return collapsed[:limit] + "…"
 
 
-def _validate_filters(
+def _validate_boost(
     raw: object, schema: Mapping[str, Sequence[str]]
 ) -> dict[str, list[str]]:
     """Keeps only the fields and values the schema actually knows.
 
-    This is the guard against hallucinated filters: anything the indexed
-    documents never contained is dropped instead of skewing the search.
+    This is the guard against hallucinated boost values: anything the indexed
+    documents never contained is dropped instead of skewing the ranking.
 
     Args:
         raw: The ``filters`` value of the model response.
         schema: Filterable fields mapped onto their known values.
 
     Returns:
-        The validated filters, empty if nothing survived.
+        The validated boost values, empty if nothing survived.
     """
     if not isinstance(raw, dict):
         if raw is not None:

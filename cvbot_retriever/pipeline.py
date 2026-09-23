@@ -129,11 +129,8 @@ class ConversationEngine:
             self._collection,
             condensed.query,
             self._settings.top_k,
-            filters=condensed.filters,
-            overfetch_factor=self._settings.overfetch_factor,
-            filter_weight=self._settings.filter_weight,
-            recency_weight=self._settings.recency_weight,
-            recency_window_years=self._settings.recency_window_years,
+            self._settings.ranking_config(),
+            boost=condensed.boost,
         )
         current = Message(
             role=ROLE_USER, content=build_user_message(question, chunks)

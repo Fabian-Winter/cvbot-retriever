@@ -46,6 +46,53 @@ DEFAULT_MAX_CONVERSATIONS = 50
 
 
 @dataclass(frozen=True)
+class RankingConfig:
+    """Weights and window of the re-ranking stage.
+
+    The single home of the ranking defaults: ``retrieve`` and ``rerank`` take
+    this object instead of loose tuning parameters, so the values cannot
+    drift between a module default and the configuration.
+
+    Attributes:
+        overfetch_factor: How many times ``top_k`` is fetched before the
+            similarity, boost and recency scores re-rank the candidates.
+            Higher values let a fresher or matching chunk win from further
+            down the similarity ranking.
+        filter_weight: Largest score the metadata boost can add, relative to
+            the similarity score, which lies between 0 and 1. Scaled by the
+            share of the extracted fields a chunk matches, so the bonus stays
+            bounded no matter how many fields were extracted.
+        recency_weight: Largest score the recency bonus can add, derived from
+            the ``from``/``to``/``status`` metadata at query time. ``0`` turns
+            the bonus off and leaves the pure similarity order.
+        recency_window_years: How many years back the recency bonus decays
+            linearly to zero.
+    """
+
+    overfetch_factor: int = DEFAULT_OVERFETCH_FACTOR
+    filter_weight: float = DEFAULT_FILTER_WEIGHT
+    recency_weight: float = DEFAULT_RECENCY_WEIGHT
+    recency_window_years: int = DEFAULT_RECENCY_WINDOW_YEARS
+
+    def __post_init__(self) -> None:
+        """Validates the ranking parameters.
+
+        Raises:
+            ValueError: If a value is outside the accepted range.
+        """
+        require_positive(self.overfetch_factor, "overfetch_factor")
+        require_below(
+            self.overfetch_factor,
+            MAX_OVERFETCH_FACTOR,
+            "overfetch_factor",
+            "the supported maximum",
+        )
+        require_float_in_range(self.filter_weight, 0.0, 1.0, "filter_weight")
+        require_float_in_range(self.recency_weight, 0.0, 1.0, "recency_weight")
+        require_positive(self.recency_window_years, "recency_window_years")
+
+
+@dataclass(frozen=True)
 class Settings:
     """Runtime configuration of the retrieval pipeline.
 
@@ -62,11 +109,12 @@ class Settings:
         llm_model_id: Bedrock model ID used to generate the answer.
         top_k: Number of chunks retrieved per question.
         overfetch_factor: How many times ``top_k`` is fetched before the
-            similarity, filter and recency scores re-rank the candidates.
+            similarity, boost and recency scores re-rank the candidates.
             Higher values let a fresher or matching chunk win from further
             down the similarity ranking.
-        filter_weight: Score a chunk gains per metadata field it matches,
-            relative to the similarity score, which lies between 0 and 1.
+        filter_weight: Largest score the metadata boost can add, relative to
+            the similarity score, which lies between 0 and 1. Scaled by the
+            share of the extracted fields a chunk matches.
         recency_weight: Largest score the recency bonus can add, derived from
             the ``from``/``to``/``status`` metadata at query time. ``0`` turns
             the bonus off and leaves the pure similarity order.
@@ -129,16 +177,9 @@ class Settings:
         require_non_empty(self.aws_region, "aws_region")
         require_non_empty(self.llm_model_id, "llm_model_id")
         require_positive(self.top_k, "top_k")
-        require_positive(self.overfetch_factor, "overfetch_factor")
-        require_below(
-            self.overfetch_factor,
-            MAX_OVERFETCH_FACTOR,
-            "overfetch_factor",
-            "the supported maximum",
-        )
-        require_float_in_range(self.filter_weight, 0.0, 1.0, "filter_weight")
-        require_float_in_range(self.recency_weight, 0.0, 1.0, "recency_weight")
-        require_positive(self.recency_window_years, "recency_window_years")
+        # The ranking parameters are validated by RankingConfig alone, so the
+        # rules cannot drift apart between the two configurations.
+        self.ranking_config()
         require_positive(self.max_context_tokens, "max_context_tokens")
         require_positive(self.response_token_buffer, "response_token_buffer")
         require_below(
@@ -238,6 +279,19 @@ class Settings:
             max_conversations=read_int(
                 source, "MAX_CONVERSATIONS", DEFAULT_MAX_CONVERSATIONS
             ),
+        )
+
+    def ranking_config(self) -> RankingConfig:
+        """Extracts the ranking parameters of this configuration.
+
+        Returns:
+            The validated ranking configuration for ``retrieve``.
+        """
+        return RankingConfig(
+            overfetch_factor=self.overfetch_factor,
+            filter_weight=self.filter_weight,
+            recency_weight=self.recency_weight,
+            recency_window_years=self.recency_window_years,
         )
 
     def with_overrides(self, **overrides: Any) -> "Settings":

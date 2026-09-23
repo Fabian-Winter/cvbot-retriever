@@ -54,7 +54,7 @@ def test_first_turn_without_schema_skips_the_model_call(settings: Settings) -> N
     result = condense_and_extract(llm, [], "Wo hat sie studiert?")
 
     assert result.query == "Wo hat sie studiert?"
-    assert result.filters == {}
+    assert result.boost == {}
     assert runtime.calls == []
 
 
@@ -66,7 +66,7 @@ def test_history_without_schema_returns_the_condensed_text(
     result = condense_and_extract(llm, HISTORY, "Und davor?")
 
     assert result.query == "Wo hat die Person vorher gearbeitet?"
-    assert result.filters == {}
+    assert result.boost == {}
     [request] = runtime.calls
     assert [message["role"] for message in request["messages"]] == [
         "user",
@@ -153,7 +153,7 @@ def test_filters_are_extracted(settings: Settings) -> None:
 
     result = condense_and_extract(llm, [], "Was war 2013?", SCHEMA)
 
-    assert result.filters == {"years": ["2013"]}
+    assert result.boost == {"years": ["2013"]}
 
 
 def test_a_single_filter_value_may_be_a_string(settings: Settings) -> None:
@@ -163,7 +163,7 @@ def test_a_single_filter_value_may_be_a_string(settings: Settings) -> None:
 
     result = condense_and_extract(llm, [], "Was macht er aktuell?", SCHEMA)
 
-    assert result.filters == {"status": ["aktuell"]}
+    assert result.boost == {"status": ["aktuell"]}
 
 
 def test_ambiguous_questions_may_yield_several_values(settings: Settings) -> None:
@@ -173,7 +173,7 @@ def test_ambiguous_questions_may_yield_several_values(settings: Settings) -> Non
 
     result = condense_and_extract(llm, [], "2011 oder 2012?", SCHEMA)
 
-    assert result.filters == {"years": ["2011", "2012"]}
+    assert result.boost == {"years": ["2011", "2012"]}
 
 
 def test_unknown_filter_field_is_dropped(settings: Settings) -> None:
@@ -184,7 +184,7 @@ def test_unknown_filter_field_is_dropped(settings: Settings) -> None:
 
     result = condense_and_extract(llm, [], "Frage?", SCHEMA)
 
-    assert result.filters == {"status": ["aktuell"]}
+    assert result.boost == {"status": ["aktuell"]}
 
 
 def test_unknown_filter_value_is_dropped(settings: Settings) -> None:
@@ -194,7 +194,7 @@ def test_unknown_filter_value_is_dropped(settings: Settings) -> None:
 
     result = condense_and_extract(llm, [], "Was war 1999?", SCHEMA)
 
-    assert result.filters == {}
+    assert result.boost == {}
 
 
 def test_missing_filters_become_an_empty_mapping(settings: Settings) -> None:
@@ -205,7 +205,7 @@ def test_missing_filters_become_an_empty_mapping(settings: Settings) -> None:
 
     result = condense_and_extract(llm, [], "Frage?", SCHEMA)
 
-    assert result.filters == {}
+    assert result.boost == {}
 
 
 def test_non_object_filters_are_ignored(settings: Settings) -> None:
@@ -218,7 +218,7 @@ def test_non_object_filters_are_ignored(settings: Settings) -> None:
 
     result = condense_and_extract(llm, [], "Frage?", SCHEMA)
 
-    assert result.filters == {}
+    assert result.boost == {}
 
 
 def test_missing_query_falls_back_to_the_raw_question(settings: Settings) -> None:
@@ -235,7 +235,7 @@ def test_missing_query_falls_back_to_the_raw_question(settings: Settings) -> Non
     result = condense_and_extract(llm, [], "Frage?", SCHEMA)
 
     assert result.query == "Frage?"
-    assert result.filters == {"status": ["aktuell"]}
+    assert result.boost == {"status": ["aktuell"]}
 
 
 def test_text_answer_instead_of_the_tool_falls_back(
@@ -246,7 +246,7 @@ def test_text_answer_instead_of_the_tool_falls_back(
     result = condense_and_extract(llm, [], "Frage?", SCHEMA)
 
     assert result.query == "Frage?"
-    assert result.filters == {}
+    assert result.boost == {}
 
 
 def test_unknown_tool_call_falls_back_to_the_raw_question(
@@ -259,7 +259,7 @@ def test_unknown_tool_call_falls_back_to_the_raw_question(
     result = condense_and_extract(llm, [], "Frage?", SCHEMA)
 
     assert result.query == "Frage?"
-    assert result.filters == {}
+    assert result.boost == {}
 
 
 def test_failed_condensation_falls_back_to_the_raw_question(
@@ -270,7 +270,7 @@ def test_failed_condensation_falls_back_to_the_raw_question(
     result = condense_and_extract(llm, HISTORY, "Und davor?", SCHEMA)
 
     assert result.query == "Und davor?"
-    assert result.filters == {}
+    assert result.boost == {}
 
 
 def test_empty_condensation_result_falls_back_to_the_raw_question(
@@ -281,4 +281,4 @@ def test_empty_condensation_result_falls_back_to_the_raw_question(
     result = condense_and_extract(llm, HISTORY, "Und davor?", SCHEMA)
 
     assert result.query == "Und davor?"
-    assert result.filters == {}
+    assert result.boost == {}

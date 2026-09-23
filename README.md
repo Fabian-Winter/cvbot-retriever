@@ -32,7 +32,9 @@ Every candidate is scored by three additive parts, and the best `TOP_K` win:
 
 - **Similarity** – the vector distance mapped onto `(0, 1]` via `1 / (1 + d)`,
   so a closer chunk always contributes more.
-- **Filter bonus** – `FILTER_WEIGHT` per metadata field the chunk satisfies.
+- **Filter bonus** – up to `FILTER_WEIGHT`, scaled by the share of the
+  extracted metadata fields the chunk satisfies. The bonus is capped, so a
+  chunk never outranks a much closer one through field count alone.
 - **Recency bonus** – `RECENCY_WEIGHT` scaled by how recently the section
   ended, read at query time from the `from`/`to`/`status` metadata
   cvbot-embedder already wrote: an open-ended `to` (`now`, `laufend`, absent)
@@ -52,10 +54,11 @@ the condensation prompt so the model knows what it may filter on.
 
 The pipeline is deliberately tolerant, in both directions:
 
-- **Nothing is ever excluded.** Filters only re-rank. A matching chunk gains
-  `FILTER_WEIGHT` per field and moves up; a chunk that lacks the field keeps
-  its place. A filter without a single match therefore degrades into plain
-  semantic search instead of returning nothing.
+- **Nothing is ever excluded.** Filters only re-rank. A matching chunk gains up
+  to `FILTER_WEIGHT`, scaled by the share of the extracted fields it satisfies,
+  and moves up; a chunk that lacks the field keeps its place. A filter without
+  a single match therefore degrades into plain semantic search instead of
+  returning nothing.
 - **Nothing is ever invented.** Every extracted field and value is validated
   against the published schema; anything unknown is dropped with a log entry.
   A question without a filterable criterion yields empty filters, not an error.
@@ -111,7 +114,7 @@ usually only `CHROMA_HOST` needs to be set.
 | `LLM_MODEL_ID` | `eu.amazon.nova-2-lite-v1:0` | Bedrock model ID for the answer |
 | `TOP_K` | `4` | Number of chunks retrieved per question |
 | `OVERFETCH_FACTOR` | `4` | How many times `TOP_K` is fetched before similarity, filters and recency re-rank the candidates |
-| `FILTER_WEIGHT` | `0.2` | Ranking score per matching metadata field, relative to the similarity score of 0 to 1 |
+| `FILTER_WEIGHT` | `0.2` | Largest score the filter bonus adds, scaled by the share of matching metadata fields, relative to the similarity score of 0 to 1 |
 | `RECENCY_WEIGHT` | `0.2` | Largest score the recency bonus adds; `0` turns it off |
 | `RECENCY_WINDOW_YEARS` | `10` | How many years back the recency bonus decays to zero |
 | `MAX_CONTEXT_TOKENS` | `8000` | Upper bound for the whole context sent to the LLM |
@@ -367,7 +370,8 @@ cvbot_retriever/
   config.py        Settings from environment variables
   embeddings.py    Bedrock embedding model for the question
   vector_store.py  Read-only ChromaDB client and collection
-  retriever.py     Top-k chunk lookup
+  retriever.py     Candidate fetch with over-fetching
+  ranking.py       Re-ranking by similarity, boost and recency
   query_condensation.py  Standalone query and metadata filter extraction
   prompts.py       System prompt and user message construction
   conversation.py  Messages, full history and conversation store

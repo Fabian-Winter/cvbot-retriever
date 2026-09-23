@@ -24,6 +24,7 @@ from cvbot_retriever.config import (
     DEFAULT_TRUST_FORWARDED_FOR,
     DEFAULT_WEB_HOST,
     DEFAULT_WEB_PORT,
+    RankingConfig,
     Settings,
 )
 
@@ -251,3 +252,49 @@ def test_with_overrides_ignores_none() -> None:
     assert updated.chroma_host == "original"
     assert updated.top_k == 7
     assert settings.top_k == 3
+
+
+def test_ranking_config_defaults() -> None:
+    config = RankingConfig()
+
+    assert config.overfetch_factor == DEFAULT_OVERFETCH_FACTOR
+    assert config.filter_weight == DEFAULT_FILTER_WEIGHT
+    assert config.recency_weight == DEFAULT_RECENCY_WEIGHT
+    assert config.recency_window_years == DEFAULT_RECENCY_WINDOW_YEARS
+
+
+def test_settings_ranking_config_mirrors_the_settings() -> None:
+    settings = Settings.from_env(
+        env={
+            "OVERFETCH_FACTOR": "6",
+            "FILTER_WEIGHT": "0.4",
+            "RECENCY_WEIGHT": "0.3",
+            "RECENCY_WINDOW_YEARS": "5",
+        }
+    )
+
+    config = settings.ranking_config()
+
+    assert config == RankingConfig(
+        overfetch_factor=6,
+        filter_weight=0.4,
+        recency_weight=0.3,
+        recency_window_years=5,
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"overfetch_factor": 0},
+        {"overfetch_factor": 100},
+        {"filter_weight": -0.1},
+        {"filter_weight": 1.1},
+        {"recency_weight": -0.1},
+        {"recency_weight": 1.1},
+        {"recency_window_years": 0},
+    ],
+)
+def test_ranking_config_rejects_invalid_values(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        RankingConfig(**overrides)  # type: ignore[arg-type]
