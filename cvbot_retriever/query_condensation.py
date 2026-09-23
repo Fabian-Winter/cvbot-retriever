@@ -64,13 +64,24 @@ Verfügbare Filterfelder und ihre erlaubten Werte:
 {schema_block}
 
 Regeln für die Filter:
-- Du verwendest ausschließlich die oben genannten Felder und übernimmst deren \
-Werte wortgleich.
-- Du erfindest keine Felder und keine Werte und rätst nicht. Im Zweifel lässt \
-du das Feld weg.
-- Erkennst du kein Filterkriterium, übergibst du ein leeres Objekt.
-- Ist die Nachricht mehrdeutig, nennst du mehrere Werte im selben Feld; sie \
-werden als Oder-Verknüpfung behandelt.
+- Du verwendest ausschließlich die oben genannten Felder.
+- Die Sprache des Gesprächs kann von der Sprache der Filterwerte abweichen. \
+Du ordnest der Nachricht das sinngemäß passende Feld und den sinngemäß \
+passenden Wert aus der Liste zu, auch wenn das Wort in der Nachricht in einer \
+anderen Sprache steht, ein Synonym oder eine Umschreibung ist.
+- Ein Beispiel, das nur die Zuordnung zeigt und dessen Felder und Werte nicht \
+zu deinem Schema gehören: fragt jemand "was ist seine aktuelle stelle?", so \
+bedeutet "aktuell" dasselbe wie ein Wert wie "current" in einem \
+Status-Feld, und du setzt dieses Feld. Ebenso ist "stelle" ein Synonym für \
+Arbeitgeber oder berufliche Position oder berufliches Projekt.
+- Ein Wert gilt als erfunden, wenn er nicht in der Liste des Feldes steht; \
+das ist verboten. Die passende Übersetzung oder ein Synonym eines gelisteten \
+Wertes zu wählen ist dagegen kein Raten und ausdrücklich gewünscht.
+- Trifft kein einziger Wert einer Liste erkennbar zu, lässt du das Feld weg. \
+Ist die Nachricht mehrdeutig zwischen mehreren gelisteten Werten desselben \
+Feldes, nennst du mehrere Werte; sie werden als Oder-Verknüpfung behandelt.
+- Erkennst du in keinem Feld ein passendes Kriterium, übergibst du ein leeres \
+Objekt.
 
 Rufe abschließend das Werkzeug "{tool_name}" auf und übergib die Suchanfrage \
 als "query" und die Filter als "filters". Mache das immer, unabhängig vom \
@@ -79,6 +90,12 @@ Inhalt der Nachricht.
 
 # Name of the tool whose forced call carries the structured answer.
 FILTER_TOOL_NAME = "extract_query_filters"
+
+# Condensation and extraction are transformations, not creative tasks: the
+# same question has to produce the same query and the same filters, or the
+# behaviour cannot be reproduced while the prompt is tuned. Applied to this
+# request only, so the answer generation keeps the model's own default.
+CONDENSATION_INFERENCE_CONFIG: dict[str, Any] = {"temperature": 0}
 
 # The schema of the tool input. The filter values themselves cannot be part
 # of it: they come from the indexed documents and change with every rebuild,
@@ -198,7 +215,9 @@ def _condense_plain_text(
     try:
         messages = [*history, Message(role=ROLE_USER, content=question)]
         response = llm.generate(
-            messages, system=CONDENSATION_SYSTEM_PROMPT
+            messages,
+            system=CONDENSATION_SYSTEM_PROMPT,
+            inference_config=CONDENSATION_INFERENCE_CONFIG,
         ).strip()
     except Exception:
         LOGGER.warning(
@@ -242,6 +261,7 @@ def _extract_with_tool(
             messages,
             system=_build_system_prompt(schema),
             tool_config=_FILTER_TOOL_CONFIG,
+            inference_config=CONDENSATION_INFERENCE_CONFIG,
         )
     except Exception:
         LOGGER.warning(
@@ -288,6 +308,15 @@ def _result_from_tool_call(
     if not isinstance(query, str) or not query.strip():
         LOGGER.warning("filter tool call had no usable query")
         query = question
+
+    # Logged before validation: an empty result in the info log is ambiguous,
+    # and only this line tells whether the model sent nothing or the
+    # validation in _validate_filters dropped everything.
+    LOGGER.debug(
+        "raw filter tool input: query=%r filters=%r",
+        tool_call.input.get("query"),
+        _to_log_line(str(tool_call.input.get("filters"))),
+    )
 
     return CondensationResult(
         query=query.strip(),

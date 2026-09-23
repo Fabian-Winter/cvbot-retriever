@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -61,7 +62,12 @@ class BedrockLLMClient:
             settings.aws_region,
         )
 
-    def generate(self, messages: Sequence[Message], system: str) -> str:
+    def generate(
+        self,
+        messages: Sequence[Message],
+        system: str,
+        inference_config: dict[str, Any] | None = None,
+    ) -> str:
         """Sends a conversation to the model and returns its answer.
 
         Args:
@@ -71,6 +77,10 @@ class BedrockLLMClient:
                 that the model can tell it apart from the user input. It is
                 mandatory: without it the persona and the injection guardrails
                 would silently be missing.
+            inference_config: Optional ``inferenceConfig`` block (for example
+                ``{"temperature": 0}``) applied to this single request. Left
+                unset, the model answers with its own default, which is what
+                the answer generation relies on for a natural style.
 
         Returns:
             The generated text.
@@ -79,7 +89,7 @@ class BedrockLLMClient:
             ValueError: If the system prompt is empty, if no message is given
                 or if the last one is not a user turn.
         """
-        text, _ = self._converse(messages, system)
+        text, _ = self._converse(messages, system, inference_config=inference_config)
         return text
 
     def generate_tool_call(
@@ -87,6 +97,7 @@ class BedrockLLMClient:
         messages: Sequence[Message],
         system: str,
         tool_config: dict[str, Any],
+        inference_config: dict[str, Any] | None = None,
     ) -> ToolCall | None:
         """Sends a conversation that forces the model to call a tool.
 
@@ -102,6 +113,9 @@ class BedrockLLMClient:
             system: The system prompt, sent as a separate Converse block.
             tool_config: The ``toolConfig`` block of the Converse request,
                 holding the tool definitions and the tool choice.
+            inference_config: Optional ``inferenceConfig`` block for this
+                single request; extraction calls pass ``{"temperature": 0}``
+                so that the same question yields the same tool input.
 
         Returns:
             The tool call the model requested, or ``None`` if the response
@@ -111,7 +125,9 @@ class BedrockLLMClient:
             ValueError: If the system prompt is empty, if no message is given
                 or if the last one is not a user turn.
         """
-        _, response = self._converse(messages, system, tool_config=tool_config)
+        _, response = self._converse(
+            messages, system, tool_config=tool_config, inference_config=inference_config
+        )
         return _extract_tool_call(response)
 
     def _converse(
@@ -119,6 +135,7 @@ class BedrockLLMClient:
         messages: Sequence[Message],
         system: str,
         tool_config: dict[str, Any] | None = None,
+        inference_config: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Runs a Converse request and returns text plus raw response.
 
@@ -126,6 +143,9 @@ class BedrockLLMClient:
             messages: The turns of the conversation, ending with a user turn.
             system: The system prompt.
             tool_config: Optional ``toolConfig`` block forcing tool use.
+            inference_config: Optional ``inferenceConfig`` block, applied to
+                this request only, so that other callers of the same client
+                keep the model defaults.
 
         Returns:
             The generated text and the untouched Converse response, so that
@@ -149,6 +169,8 @@ class BedrockLLMClient:
         }
         if tool_config is not None:
             request["toolConfig"] = tool_config
+        if inference_config is not None:
+            request["inferenceConfig"] = inference_config
 
         LOGGER.debug(
             "invoking %s with %d message(s), tool_config=%s",
@@ -185,17 +207,45 @@ def _log_response(response: dict[str, Any]) -> None:
         LOGGER.debug(
             "bedrock response:"
             "stop_reason=%s block_types=%s tokens=%s/%s text_len=%d"
-            "text=%r",
+            " text=%r tool_input=%s",
             stop_reason or "?",
             ",".join(block_types) or "text",
             usage.get("inputTokens", "?"),
             usage.get("outputTokens", "?"),
             len(text),
             " ".join(text.split()),
+            _toolUse_to_log(content),
         )
     except Exception:
         # Diagnosis must never be the reason a request fails.
         LOGGER.debug("could not log bedrock response shape", exc_info=True)
+
+
+def _toolUse_to_log(content: list[Any], limit: int = 400) -> str:
+    """Renders the input of the first tool use block for a single log line.
+
+    ``_extract_text`` ignores tool use blocks, so without this the structured
+    answer a forced tool call produced would be invisible in the log - which
+    makes it impossible to tell an empty model answer from a filter that a
+    later validation step dropped.
+
+    Args:
+        content: The content blocks of the Converse response.
+        limit: Maximum number of characters to keep.
+
+    Returns:
+        The tool input as compact JSON, or ``-`` if the answer has no tool use
+        block.
+    """
+    for block in content:
+        if not isinstance(block, dict) or "toolUse" not in block:
+            continue
+        rendered = json.dumps(
+            block["toolUse"].get("input"), ensure_ascii=False, default=str
+        )
+        collapsed = " ".join(rendered.split())
+        return collapsed[:limit] + "…" if len(collapsed) > limit else collapsed
+    return "-"
 
 
 def _extract_text(response: dict[str, Any]) -> str:

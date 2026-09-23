@@ -9,6 +9,7 @@ from cvbot_retriever.config import Settings
 from cvbot_retriever.conversation import Message
 from cvbot_retriever.llm import BedrockLLMClient
 from cvbot_retriever.query_condensation import (
+    CONDENSATION_INFERENCE_CONFIG,
     FILTER_TOOL_NAME,
     condense_and_extract,
 )
@@ -112,6 +113,23 @@ def test_the_schema_is_injected_into_the_system_prompt(settings: Settings) -> No
     assert "- status: aktuell | historisch" in system
     assert "- years: 2011 | 2012 | 2013" in system
     assert FILTER_TOOL_NAME in system
+
+
+def test_the_tool_path_freezes_the_temperature(settings: Settings) -> None:
+    llm, runtime = build_llm(settings, tool_calls=[filter_call("q", {})])
+
+    condense_and_extract(llm, [], "Frage?", SCHEMA)
+
+    assert runtime.calls[0]["inferenceConfig"] == CONDENSATION_INFERENCE_CONFIG
+    assert CONDENSATION_INFERENCE_CONFIG == {"temperature": 0}
+
+
+def test_the_plain_text_path_freezes_the_temperature(settings: Settings) -> None:
+    llm, runtime = build_llm(settings, "Wo hat die Person vorher gearbeitet?")
+
+    condense_and_extract(llm, HISTORY, "Und davor?")
+
+    assert runtime.calls[0]["inferenceConfig"] == CONDENSATION_INFERENCE_CONFIG
 
 
 def test_schema_values_are_normalized_before_entering_the_prompt(

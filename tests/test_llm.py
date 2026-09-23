@@ -84,6 +84,24 @@ def test_generate_joins_multiple_text_blocks(settings: Settings) -> None:
     assert client.generate([QUESTION], SYSTEM) == "First part.\nSecond part."
 
 
+def test_generate_omits_the_inference_config_by_default(settings: Settings) -> None:
+    runtime = FakeBedrockRuntime()
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    client.generate([QUESTION], SYSTEM)
+
+    assert "inferenceConfig" not in runtime.calls[0]
+
+
+def test_generate_forwards_the_inference_config(settings: Settings) -> None:
+    runtime = FakeBedrockRuntime()
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    client.generate([QUESTION], SYSTEM, inference_config={"temperature": 0})
+
+    assert runtime.calls[0]["inferenceConfig"] == {"temperature": 0}
+
+
 TOOL_CONFIG = {
     "tools": [{"toolSpec": {"name": "my_tool", "inputSchema": {"json": {}}}}],
     "toolChoice": {"any": {}},
@@ -136,6 +154,34 @@ def test_generate_tool_call_tolerates_a_non_mapping_input(
 
     assert call is not None
     assert call.input == {}
+
+
+def test_generate_tool_call_forwards_the_inference_config(
+    settings: Settings,
+) -> None:
+    runtime = FakeBedrockRuntime(
+        tool_calls=[{"name": "my_tool", "input": {"query": "q"}}]
+    )
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    client.generate_tool_call(
+        [QUESTION], SYSTEM, TOOL_CONFIG, inference_config={"temperature": 0}
+    )
+
+    assert runtime.calls[0]["inferenceConfig"] == {"temperature": 0}
+
+
+def test_generate_tool_call_omits_the_inference_config_by_default(
+    settings: Settings,
+) -> None:
+    runtime = FakeBedrockRuntime(
+        tool_calls=[{"name": "my_tool", "input": {"query": "q"}}]
+    )
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG)
+
+    assert "inferenceConfig" not in runtime.calls[0]
 
 
 @pytest.mark.parametrize("system", ["", "   "])
