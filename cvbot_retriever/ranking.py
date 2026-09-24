@@ -26,11 +26,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
 from typing import Any
 
 from cvbot_core.metadata import period_end_year, split_values
 from langchain_core.documents import Document
+
+from cvbot_core.metadata import (
+    current_year,
+)
 
 from .config import RankingConfig
 
@@ -54,7 +57,7 @@ def rerank(
         The chunks in ``candidates``, ordered by decreasing total score. Ties
         keep the order of the candidates, which is the similarity order.
     """
-    now_year = _current_year()
+    now_year = current_year()
     scores = [
         _total_score(
             chunk,
@@ -174,8 +177,3 @@ def _recency_factor(
         return 0.0
     factor = (end_year - (now_year - window_years)) / window_years
     return min(max(factor, 0.0), 1.0)
-
-
-def _current_year() -> int:
-    """Returns the current year; separated out so tests can pin it."""
-    return datetime.now(UTC).year

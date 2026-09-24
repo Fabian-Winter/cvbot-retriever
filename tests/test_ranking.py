@@ -15,7 +15,7 @@ NOW_YEAR = 2026
 @pytest.fixture(autouse=True)
 def pinned_year(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pins the current year the recency bonus decays against."""
-    monkeypatch.setattr(ranking, "_current_year", lambda: NOW_YEAR)
+    monkeypatch.setattr(ranking, "current_year", lambda: NOW_YEAR)
 
 
 def build_candidates(
@@ -154,20 +154,22 @@ def test_an_open_ended_period_counts_as_current() -> None:
     assert [chunk.page_content for chunk in result] == ["Chunk 1", "Chunk 0"]
 
 
-def test_status_current_marks_an_undated_chunk_as_recent() -> None:
-    candidates = build_candidates({"status": "current"}, distances=[0.5])
-
-    result = rerank(candidates, RankingConfig())
-
-    assert [chunk.page_content for chunk in result] == ["Chunk 0"]
-
-
 def test_a_chunk_without_any_date_stays_neutral() -> None:
     candidates = build_candidates({}, {"enddate": "now"}, distances=[0.05, 0.40])
 
     result = rerank(candidates, RankingConfig())
 
     # The undated chunk is closer and loses nothing by having no date.
+    assert [chunk.page_content for chunk in result] == ["Chunk 0", "Chunk 1"]
+
+
+def test_is_current_alone_carries_no_recency_bonus() -> None:
+    # iscurrent is a boost field only; recency keeps reading the period, so an
+    # undated chunk is not treated as recent by the marker.
+    candidates = build_candidates({}, {"iscurrent": "true"}, distances=[0.05, 0.40])
+
+    result = rerank(candidates, RankingConfig())
+
     assert [chunk.page_content for chunk in result] == ["Chunk 0", "Chunk 1"]
 
 
