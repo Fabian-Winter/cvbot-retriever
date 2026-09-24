@@ -50,7 +50,7 @@ def contents(candidates: list[tuple[Document, float]]) -> list[str]:
 
 
 def test_closer_chunks_win_without_any_bonus() -> None:
-    candidates = build_candidates({"to": "2010"}, {})
+    candidates = build_candidates({"enddate": "2010"}, {})
 
     assert contents(candidates) == ["Chunk 0", "Chunk 1"]
 
@@ -134,8 +134,8 @@ def test_the_boost_bonus_is_bounded_by_its_weight() -> None:
 
 def test_a_newer_chunk_beats_a_slightly_closer_older_one() -> None:
     candidates = build_candidates(
-        {"from": "2012", "to": "2014"},
-        {"from": "2025", "to": "2026"},
+        {"startdate": "2012", "enddate": "2014"},
+        {"startdate": "2025", "enddate": "2026"},
         distances=[0.10, 0.11],
     )
 
@@ -146,7 +146,7 @@ def test_a_newer_chunk_beats_a_slightly_closer_older_one() -> None:
 
 def test_an_open_ended_period_counts_as_current() -> None:
     candidates = build_candidates(
-        {"to": "2016"}, {"to": "laufend"}, distances=[0.10, 0.11]
+        {"enddate": "2016"}, {"enddate": "laufend"}, distances=[0.10, 0.11]
     )
 
     result = rerank(candidates, RankingConfig())
@@ -163,7 +163,7 @@ def test_status_current_marks_an_undated_chunk_as_recent() -> None:
 
 
 def test_a_chunk_without_any_date_stays_neutral() -> None:
-    candidates = build_candidates({}, {"to": "now"}, distances=[0.05, 0.40])
+    candidates = build_candidates({}, {"enddate": "now"}, distances=[0.05, 0.40])
 
     result = rerank(candidates, RankingConfig())
 
@@ -173,8 +173,8 @@ def test_a_chunk_without_any_date_stays_neutral() -> None:
 
 def test_a_period_beyond_the_window_gets_no_bonus() -> None:
     candidates = build_candidates(
-        {"to": str(NOW_YEAR - 10)},
-        {"to": str(NOW_YEAR - 11)},
+        {"enddate": str(NOW_YEAR - 10)},
+        {"enddate": str(NOW_YEAR - 11)},
         distances=[0.10, 0.11],
     )
 
@@ -185,7 +185,7 @@ def test_a_period_beyond_the_window_gets_no_bonus() -> None:
 
 def test_a_zero_recency_weight_restores_the_pure_similarity_order() -> None:
     candidates = build_candidates(
-        {"to": "2014"}, {"to": "now"}, distances=[0.10, 0.11]
+        {"enddate": "2014"}, {"enddate": "now"}, distances=[0.10, 0.11]
     )
 
     result = rerank(candidates, RankingConfig(recency_weight=0.0))

@@ -11,7 +11,7 @@ comparable:
   boost fields the chunk satisfies, so a chunk matching the boost moves up
   without ever outranking relevance through field count alone.
 - ``recency factor``: ``recency_weight`` scaled by how recently the chunk's
-  period ended, derived at query time from the existing ``from``/``to``/
+  period ended, derived at query time from the existing ``startdate``/``enddate``/
   ``status`` metadata through the shared rule in cvbot_core. No re-indexing is
   involved, and a chunk without any usable date scores zero rather than
   negative.

@@ -36,8 +36,8 @@ Every candidate is scored by three additive parts, and the best `TOP_K` win:
   extracted metadata fields the chunk satisfies. The bonus is capped, so a
   chunk never outranks a much closer one through field count alone.
 - **Recency bonus** – `RECENCY_WEIGHT` scaled by how recently the section
-  ended, read at query time from the `from`/`to`/`status` metadata
-  cvbot-embedder already wrote: an open-ended `to` (`now`, `laufend`, absent)
+  ended, read at query time from the `startdate`/`enddate`/`status` metadata
+  cvbot-embedder already wrote: an open-ended `enddate` (`now`, `laufend`, absent)
   or `status: current` counts as the present, a concrete one decays linearly to
   zero over `RECENCY_WINDOW_YEARS`. A section without any date stays neutral,
   which keeps the undated documents competitive. `RECENCY_WEIGHT=0` turns the

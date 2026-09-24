@@ -63,8 +63,8 @@ class RankingConfig:
             share of the extracted fields a chunk matches, so the bonus stays
             bounded no matter how many fields were extracted.
         recency_weight: Largest score the recency bonus can add, derived from
-            the ``from``/``to``/``status`` metadata at query time. ``0`` turns
-            the bonus off and leaves the pure similarity order.
+            the ``startdate``/``enddate``/``status`` metadata at query time.
+            ``0`` turns the bonus off and leaves the pure similarity order.
         recency_window_years: How many years back the recency bonus decays
             linearly to zero.
     """
@@ -116,8 +116,8 @@ class Settings:
             the similarity score, which lies between 0 and 1. Scaled by the
             share of the extracted fields a chunk matches.
         recency_weight: Largest score the recency bonus can add, derived from
-            the ``from``/``to``/``status`` metadata at query time. ``0`` turns
-            the bonus off and leaves the pure similarity order.
+            the ``startdate``/``enddate``/``status`` metadata at query time.
+            ``0`` turns the bonus off and leaves the pure similarity order.
         recency_window_years: How many years back the recency bonus decays
             linearly to zero.
         max_context_tokens: Upper bound for the whole context sent to the LLM
