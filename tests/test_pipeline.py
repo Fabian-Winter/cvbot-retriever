@@ -201,12 +201,7 @@ def test_a_published_schema_costs_exactly_one_extra_call_on_the_first_turn(
     store = FakeStore(CHUNKS)
     runtime = FakeBedrockRuntime(
         [ANSWER],
-        tool_calls=[
-            {
-                "name": "extract_query_filters",
-                "input": {"query": "Was 2020?", "filters": {}},
-            }
-        ],
+        json_responses=[{"query": "Was 2020?", "filters": {}}],
     )
     monkeypatch.setattr(pipeline, "create_client", lambda s: object())
     monkeypatch.setattr(
@@ -243,12 +238,7 @@ def test_extracted_filters_overfetch_before_re_ranking(
     store = FakeStore(CHUNKS)
     runtime = FakeBedrockRuntime(
         [ANSWER],
-        tool_calls=[
-            {
-                "name": "extract_query_filters",
-                "input": {"query": "Was 2020?", "filters": {"years": ["2020"]}},
-            }
-        ],
+        json_responses=[{"query": "Was 2020?", "filters": {"years": ["2020"]}}],
     )
     monkeypatch.setattr(pipeline, "create_client", lambda s: object())
     monkeypatch.setattr(
@@ -281,7 +271,10 @@ def test_retrieval_uses_the_condensed_query_on_a_later_turn(
     fake_embeddings: FakeEmbeddings,
 ) -> None:
     store = FakeStore(CHUNKS)
-    runtime = FakeBedrockRuntime([ANSWER])
+    runtime = FakeBedrockRuntime(
+        [ANSWER],
+        json_responses=[{"query": "Was passierte danach?", "filters": {}}],
+    )
     monkeypatch.setattr(pipeline, "create_client", lambda s: object())
     monkeypatch.setattr(
         pipeline,

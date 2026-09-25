@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from typing import Any
 
 import boto3
@@ -14,22 +13,6 @@ from .config import Settings
 from .conversation import ROLE_USER, Message
 
 LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class ToolCall:
-    """A tool invocation the model requested through the Converse API.
-
-    Attributes:
-        name: Name of the tool the model called.
-        tool_use_id: Converse identifier of this invocation.
-        input: The tool input the model generated, already parsed into a
-            mapping by the SDK. Empty when the model sent no usable input.
-    """
-
-    name: str
-    tool_use_id: str
-    input: dict[str, Any] = field(default_factory=dict)
 
 
 class BedrockLLMClient:
@@ -92,49 +75,55 @@ class BedrockLLMClient:
         text, _ = self._converse(messages, system, inference_config=inference_config)
         return text
 
-    def generate_tool_call(
+    def generate_json(
         self,
         messages: Sequence[Message],
         system: str,
-        tool_config: dict[str, Any],
+        json_schema: dict[str, Any],
+        schema_name: str,
         inference_config: dict[str, Any] | None = None,
-    ) -> ToolCall | None:
-        """Sends a conversation that forces the model to call a tool.
+    ) -> dict[str, Any]:
+        """Sends a conversation whose answer has to be structured JSON.
 
-        Used where the answer must be structured: with ``toolChoice`` set to
-        ``any``, the model cannot reply with free text and has to fill the
-        tool's input schema instead, which the Converse API returns already
-        parsed. The caller is responsible for validating the input, since the
-        schema can only describe the shape, not the allowed values.
+        Uses the structured output of the Converse API: the schema is sent as
+        ``outputConfig.textFormat``, so the model is constrained while it
+        generates and cannot answer in free-form prose. The caller is still
+        responsible for validating the values, since a schema can only
+        enumerate what is known in advance.
 
         Args:
             messages: The turns of the conversation in chronological order,
                 ending with the current user message.
             system: The system prompt, sent as a separate Converse block.
-            tool_config: The ``toolConfig`` block of the Converse request,
-                holding the tool definitions and the tool choice.
+            json_schema: The JSON schema the answer has to conform to.
+            schema_name: Name of the schema, sent along for logging.
             inference_config: Optional ``inferenceConfig`` block for this
                 single request; extraction calls pass ``{"temperature": 0}``
-                so that the same question yields the same tool input.
+                so that the same question yields the same JSON.
 
         Returns:
-            The tool call the model requested, or ``None`` if the response
-            carried no usable tool use despite the forced tool choice.
+            The parsed JSON object the model generated.
 
         Raises:
-            ValueError: If the system prompt is empty, if no message is given
-                or if the last one is not a user turn.
+            ValueError: If the system prompt is empty, if no message is given,
+                if the last one is not a user turn, or if the answer is not a
+                JSON object despite the schema.
         """
-        _, response = self._converse(
-            messages, system, tool_config=tool_config, inference_config=inference_config
+        text, _ = self._converse(
+            messages,
+            system,
+            json_schema=json_schema,
+            schema_name=schema_name,
+            inference_config=inference_config,
         )
-        return _extract_tool_call(response)
+        return _parse_json_object(text)
 
     def _converse(
         self,
         messages: Sequence[Message],
         system: str,
-        tool_config: dict[str, Any] | None = None,
+        json_schema: dict[str, Any] | None = None,
+        schema_name: str = "structured_output",
         inference_config: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Runs a Converse request and returns text plus raw response.
@@ -142,14 +131,14 @@ class BedrockLLMClient:
         Args:
             messages: The turns of the conversation, ending with a user turn.
             system: The system prompt.
-            tool_config: Optional ``toolConfig`` block forcing tool use.
+            json_schema: Optional JSON schema the answer has to conform to.
+            schema_name: Name of the schema, only used when one is given.
             inference_config: Optional ``inferenceConfig`` block, applied to
                 this request only, so that other callers of the same client
                 keep the model defaults.
 
         Returns:
-            The generated text and the untouched Converse response, so that
-            callers can look for content blocks the text extraction ignores.
+            The generated text and the untouched Converse response.
 
         Raises:
             ValueError: If the system prompt is empty, if no message is given
@@ -167,16 +156,26 @@ class BedrockLLMClient:
             "messages": [message.to_converse() for message in messages],
             "system": [{"text": system}],
         }
-        if tool_config is not None:
-            request["toolConfig"] = tool_config
+        if json_schema is not None:
+            request["outputConfig"] = {
+                "textFormat": {
+                    "type": "json_schema",
+                    "structure": {
+                        "jsonSchema": {
+                            "name": schema_name,
+                            "schema": json.dumps(json_schema),
+                        }
+                    },
+                }
+            }
         if inference_config is not None:
             request["inferenceConfig"] = inference_config
 
         LOGGER.debug(
-            "invoking %s with %d message(s), tool_config=%s",
+            "invoking %s with %d message(s), json_schema=%s",
             self._model_id,
             len(messages),
-            tool_config is not None,
+            json_schema is not None,
         )
         response = self._client.converse(**request)
         _log_response(response)
@@ -206,46 +205,17 @@ def _log_response(response: dict[str, Any]) -> None:
         usage = response.get("usage", {})
         LOGGER.debug(
             "bedrock response:"
-            "stop_reason=%s block_types=%s tokens=%s/%s text_len=%d"
-            " text=%r tool_input=%s",
+            "stop_reason=%s block_types=%s tokens=%s/%s text_len=%d text=%r",
             stop_reason or "?",
             ",".join(block_types) or "text",
             usage.get("inputTokens", "?"),
             usage.get("outputTokens", "?"),
             len(text),
             " ".join(text.split()),
-            _toolUse_to_log(content),
         )
     except Exception:
         # Diagnosis must never be the reason a request fails.
         LOGGER.debug("could not log bedrock response shape", exc_info=True)
-
-
-def _toolUse_to_log(content: list[Any], limit: int = 400) -> str:
-    """Renders the input of the first tool use block for a single log line.
-
-    ``_extract_text`` ignores tool use blocks, so without this the structured
-    answer a forced tool call produced would be invisible in the log - which
-    makes it impossible to tell an empty model answer from a filter that a
-    later validation step dropped.
-
-    Args:
-        content: The content blocks of the Converse response.
-        limit: Maximum number of characters to keep.
-
-    Returns:
-        The tool input as compact JSON, or ``-`` if the answer has no tool use
-        block.
-    """
-    for block in content:
-        if not isinstance(block, dict) or "toolUse" not in block:
-            continue
-        rendered = json.dumps(
-            block["toolUse"].get("input"), ensure_ascii=False, default=str
-        )
-        collapsed = " ".join(rendered.split())
-        return collapsed[:limit] + "…" if len(collapsed) > limit else collapsed
-    return "-"
 
 
 def _extract_text(response: dict[str, Any]) -> str:
@@ -261,25 +231,22 @@ def _extract_text(response: dict[str, Any]) -> str:
     return "\n".join(block["text"] for block in content if "text" in block)
 
 
-def _extract_tool_call(response: dict[str, Any]) -> ToolCall | None:
-    """Reads the first tool use block out of a Converse response.
+def _parse_json_object(text: str) -> dict[str, Any]:
+    """Parses the answer of a structured-output request into a mapping.
 
     Args:
-        response: The response returned by the Converse API.
+        text: The generated text, expected to be one JSON object.
 
     Returns:
-        The requested tool call, or ``None`` if the answer holds no tool use
-        block or its input is not a mapping.
+        The parsed JSON object.
+
+    Raises:
+        ValueError: If the text is not valid JSON or not an object.
     """
-    content = response.get("output", {}).get("message", {}).get("content") or []
-    for block in content:
-        tool_use = block.get("toolUse") if isinstance(block, dict) else None
-        if not tool_use:
-            continue
-        tool_input = tool_use.get("input")
-        return ToolCall(
-            name=str(tool_use.get("name", "")),
-            tool_use_id=str(tool_use.get("toolUseId", "")),
-            input=tool_input if isinstance(tool_input, dict) else {},
-        )
-    return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"model answer is no valid JSON: {error}") from error
+    if not isinstance(parsed, dict):
+        raise ValueError("model answer is no JSON object")
+    return parsed

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from cvbot_retriever import llm
@@ -102,84 +104,90 @@ def test_generate_forwards_the_inference_config(settings: Settings) -> None:
     assert runtime.calls[0]["inferenceConfig"] == {"temperature": 0}
 
 
-TOOL_CONFIG = {
-    "tools": [{"toolSpec": {"name": "my_tool", "inputSchema": {"json": {}}}}],
-    "toolChoice": {"any": {}},
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {"query": {"type": "string"}},
+    "required": ["query"],
+    "additionalProperties": False,
 }
 
 
-def test_generate_tool_call_sends_the_tool_config(settings: Settings) -> None:
-    runtime = FakeBedrockRuntime(
-        tool_calls=[{"name": "my_tool", "input": {"query": "q"}}]
-    )
-    client = llm.BedrockLLMClient(settings, client=runtime)
-
-    client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG)
-
-    [request] = runtime.calls
-    assert request["toolConfig"] == TOOL_CONFIG
-    assert request["system"] == [{"text": SYSTEM}]
-
-
-def test_generate_tool_call_returns_the_tool_use_block(settings: Settings) -> None:
-    runtime = FakeBedrockRuntime(
-        tool_calls=[{"name": "my_tool", "input": {"query": "q", "filters": {}}}]
-    )
-    client = llm.BedrockLLMClient(settings, client=runtime)
-
-    call = client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG)
-
-    assert call is not None
-    assert call.name == "my_tool"
-    assert call.input == {"query": "q", "filters": {}}
-    assert call.tool_use_id
-
-
-def test_generate_tool_call_returns_none_for_a_text_answer(
+def test_generate_json_sends_the_schema_as_structured_output(
     settings: Settings,
 ) -> None:
+    runtime = FakeBedrockRuntime(json_responses=[{"query": "q"}])
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    client.generate_json(
+        [QUESTION], SYSTEM, json_schema=JSON_SCHEMA, schema_name="my_schema"
+    )
+
+    [request] = runtime.calls
+    assert request["system"] == [{"text": SYSTEM}]
+    text_format = request["outputConfig"]["textFormat"]
+    assert text_format["type"] == "json_schema"
+    json_schema = text_format["structure"]["jsonSchema"]
+    assert json_schema["name"] == "my_schema"
+    assert json.loads(json_schema["schema"]) == JSON_SCHEMA
+
+
+def test_generate_json_returns_the_parsed_object(settings: Settings) -> None:
+    runtime = FakeBedrockRuntime(
+        json_responses=[{"query": "q", "filters": {"years": ["2013"]}}]
+    )
+    client = llm.BedrockLLMClient(settings, client=runtime)
+
+    answer = client.generate_json(
+        [QUESTION], SYSTEM, json_schema=JSON_SCHEMA, schema_name="my_schema"
+    )
+
+    assert answer == {"query": "q", "filters": {"years": ["2013"]}}
+
+
+def test_generate_json_rejects_a_prose_answer(settings: Settings) -> None:
     runtime = FakeBedrockRuntime(["Just prose."])
     client = llm.BedrockLLMClient(settings, client=runtime)
 
-    assert client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG) is None
+    with pytest.raises(ValueError, match="no valid JSON"):
+        client.generate_json(
+            [QUESTION], SYSTEM, json_schema=JSON_SCHEMA, schema_name="my_schema"
+        )
 
 
-def test_generate_tool_call_tolerates_a_non_mapping_input(
-    settings: Settings,
-) -> None:
-    runtime = FakeBedrockRuntime(tool_calls=[{"name": "my_tool", "input": None}])
+def test_generate_json_rejects_a_json_array(settings: Settings) -> None:
+    runtime = FakeBedrockRuntime(["[1, 2]"])
     client = llm.BedrockLLMClient(settings, client=runtime)
 
-    call = client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG)
+    with pytest.raises(ValueError, match="no JSON object"):
+        client.generate_json(
+            [QUESTION], SYSTEM, json_schema=JSON_SCHEMA, schema_name="my_schema"
+        )
 
-    assert call is not None
-    assert call.input == {}
 
-
-def test_generate_tool_call_forwards_the_inference_config(
-    settings: Settings,
-) -> None:
-    runtime = FakeBedrockRuntime(
-        tool_calls=[{"name": "my_tool", "input": {"query": "q"}}]
-    )
+def test_generate_json_forwards_the_inference_config(settings: Settings) -> None:
+    runtime = FakeBedrockRuntime(json_responses=[{"query": "q"}])
     client = llm.BedrockLLMClient(settings, client=runtime)
 
-    client.generate_tool_call(
-        [QUESTION], SYSTEM, TOOL_CONFIG, inference_config={"temperature": 0}
+    client.generate_json(
+        [QUESTION],
+        SYSTEM,
+        json_schema=JSON_SCHEMA,
+        schema_name="my_schema",
+        inference_config={"temperature": 0},
     )
 
     assert runtime.calls[0]["inferenceConfig"] == {"temperature": 0}
 
 
-def test_generate_tool_call_omits_the_inference_config_by_default(
+def test_generate_json_omits_the_inference_config_by_default(
     settings: Settings,
 ) -> None:
-    runtime = FakeBedrockRuntime(
-        tool_calls=[{"name": "my_tool", "input": {"query": "q"}}]
-    )
+    runtime = FakeBedrockRuntime(json_responses=[{"query": "q"}])
     client = llm.BedrockLLMClient(settings, client=runtime)
 
-    client.generate_tool_call([QUESTION], SYSTEM, TOOL_CONFIG)
+    client.generate_json(
+        [QUESTION], SYSTEM, json_schema=JSON_SCHEMA, schema_name="my_schema"
+    )
 
     assert "inferenceConfig" not in runtime.calls[0]
 

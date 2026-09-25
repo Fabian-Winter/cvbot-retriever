@@ -70,7 +70,7 @@ def test_from_env_reads_all_values() -> None:
             "CHROMA_PORT": "8443",
             "CHROMA_COLLECTION": "jobs",
             "AWS_REGION": "eu-west-1",
-            "LLM_MODEL_ID": "amazon.nova-pro-v1:0",
+            "LLM_MODEL_ID": "anthropic.claude-haiku-4-5-20251001-v1:0",
             "TOP_K": "8",
             "OVERFETCH_FACTOR": "6",
             "FILTER_WEIGHT": "0.4",
@@ -94,7 +94,7 @@ def test_from_env_reads_all_values() -> None:
     assert settings.chroma_port == 8443
     assert settings.collection_name == "jobs"
     assert settings.aws_region == "eu-west-1"
-    assert settings.llm_model_id == "amazon.nova-pro-v1:0"
+    assert settings.llm_model_id == "anthropic.claude-haiku-4-5-20251001-v1:0"
     assert settings.top_k == 8
     assert settings.overfetch_factor == 6
     assert settings.filter_weight == 0.4

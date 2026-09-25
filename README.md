@@ -8,8 +8,10 @@ several turns of a conversation.
 ## How it works
 
 1. **Condense and extract** – one small model call rewrites the question into
-   a standalone search query and extracts metadata filters from it. Both come
-   back as a single JSON object, so the second step costs no extra call.
+   a standalone search query and extracts metadata filters from it. The answer
+   is forced through the structured output of the Converse API (a JSON schema
+   sent as `outputConfig.textFormat`), so both come back as a single JSON
+   object and the second step costs no extra call.
 2. **Embed** – the query is embedded with the same Bedrock model the chunks
    were indexed with.
 3. **Retrieve** – `TOP_K * OVERFETCH_FACTOR` nearest chunks are read from the
@@ -49,8 +51,9 @@ may still win from.
 ## Metadata filters
 
 The filterable schema is not configured here: cvbot-embedder publishes the
-fields it observed in the documents on the collection, and it is injected into
-the condensation prompt so the model knows what it may filter on.
+fields it observed in the documents on the collection. They are injected into
+the condensation prompt and become the enum values of the JSON schema, so the
+model can only name a field or value that actually exists.
 
 The pipeline is deliberately tolerant, in both directions:
 
@@ -78,7 +81,8 @@ The full history and the context sent to the model are managed separately:
   the current question is always kept and the system prompt is never part of
   the truncatable list, because it is sent in its own Converse block.
 - Tokens are counted with the `cl100k_base` encoding, the same approximation
-  cvbot-embedder uses for chunking.
+  cvbot-embedder uses for chunking, multiplied by a safety factor so a foreign
+  tokenizer cannot underestimate the real prompt.
 - If the system prompt and the current question alone exceed the budget, the
   call fails instead of silently sending a degraded context.
 
@@ -111,7 +115,7 @@ usually only `CHROMA_HOST` needs to be set.
 | `CHROMA_PORT` | `8000` | Port of the ChromaDB |
 | `CHROMA_COLLECTION` | `cvbot_documents` | Name of the collection |
 | `AWS_REGION` | `eu-central-1` | Region of the Bedrock client |
-| `LLM_MODEL_ID` | `eu.amazon.nova-2-lite-v1:0` | Bedrock model ID for the answer |
+| `LLM_MODEL_ID` | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock model ID for condensation and answer |
 | `TOP_K` | `4` | Number of chunks retrieved per question |
 | `OVERFETCH_FACTOR` | `4` | How many times `TOP_K` is fetched before similarity, filters and recency re-rank the candidates |
 | `FILTER_WEIGHT` | `0.2` | Largest score the filter bonus adds, scaled by the share of matching metadata fields, relative to the similarity score of 0 to 1 |
