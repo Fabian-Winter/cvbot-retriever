@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from cvbot_core.metadata import MAX_SCHEMA_FIELDS
 from cvbot_retriever import query_condensation
 from cvbot_retriever.config import Settings
 from cvbot_retriever.conversation import Message
@@ -281,3 +282,62 @@ def test_failed_condensation_falls_back_to_the_raw_question(
 
     assert result.query == "Und davor?"
     assert result.boost == {}
+
+
+def test_the_json_schema_never_exceeds_the_field_cap(
+    settings: Settings,
+) -> None:
+    # Anthropic rejects structured-output schemas with more than 24 optional
+    # parameters, and every filter field is one; the cap must hold even when
+    # an older collection published more fields.
+    big_schema = {
+        f"feld_{index:02d}": [f"wert_{index}"]
+        for index in range(MAX_SCHEMA_FIELDS + 6)
+    }
+    llm, runtime = build_llm(settings, json_responses=[answer("q", {})])
+
+    condense_and_extract(llm, [], "Frage?", big_schema)
+
+    [request] = runtime.calls
+    schema = sent_json_schema(request)
+    assert len(schema["properties"]["filters"]["properties"]) == MAX_SCHEMA_FIELDS
+    system = request["system"][0]["text"]
+    field_lines = [
+        line for line in system.splitlines() if line.startswith("- feld_")
+    ]
+    assert len(field_lines) == MAX_SCHEMA_FIELDS
+
+
+def test_a_schema_field_without_values_is_neither_prompted_nor_allowed(
+    settings: Settings,
+) -> None:
+    # _build_json_schema skips fields whose value list is empty, so the
+    # prompt must not offer them either — otherwise the model is invited to
+    # use a field the enforced grammar rejects.
+    llm, runtime = build_llm(
+        settings, json_responses=[answer("q", {})],
+    )
+
+    condense_and_extract(llm, [], "Frage?", {"status": [], "years": ["2013"]})
+
+    [request] = runtime.calls
+    schema = sent_json_schema(request)
+    assert "status" not in schema["properties"]["filters"]["properties"]
+    assert "years" in schema["properties"]["filters"]["properties"]
+    system = request["system"][0]["text"]
+    assert "- status:" not in system
+    assert "- years: 2013" in system
+
+
+def test_a_non_lowercase_schema_value_still_matches(
+    settings: Settings,
+) -> None:
+    # A collection indexed by an older embedder may hold values that were
+    # never lowercased; the model's normalized answer must still match them.
+    llm, _ = build_llm(
+        settings, json_responses=[answer("q", {"status": ["aktuell"]})]
+    )
+
+    result = condense_and_extract(llm, [], "Was macht er aktuell?", {"status": ["Aktuell"]})
+
+    assert result.boost == {"status": ["aktuell"]}

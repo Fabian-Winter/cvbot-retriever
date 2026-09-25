@@ -56,9 +56,14 @@ def count_message_tokens(messages: Iterable[Message]) -> int:
         messages: The messages to measure.
 
     Returns:
-        The token count of all message contents plus a per-message overhead.
+        The token count of all message contents plus a per-message overhead,
+        with the safety factor applied to both so the framing is scaled the
+        same way as the content it wraps.
     """
     return sum(
-        count_tokens(message.content) + MESSAGE_OVERHEAD_TOKENS
+        math.ceil(
+            (_count_core_tokens(message.content) + MESSAGE_OVERHEAD_TOKENS)
+            * TOKEN_SAFETY_FACTOR
+        )
         for message in messages
     )

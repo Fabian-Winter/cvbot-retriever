@@ -169,7 +169,9 @@ class BedrockLLMClient:
                 }
             }
         if inference_config is not None:
-            request["inferenceConfig"] = inference_config
+            # Copy so a caller-owned dict (e.g. a module-level constant)
+            # cannot be mutated through the request later on.
+            request["inferenceConfig"] = dict(inference_config)
 
         LOGGER.debug(
             "invoking %s with %d message(s), json_schema=%s",

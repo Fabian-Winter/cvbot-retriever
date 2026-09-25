@@ -121,8 +121,8 @@ usually only `CHROMA_HOST` needs to be set.
 | `FILTER_WEIGHT` | `0.2` | Largest score the filter bonus adds, scaled by the share of matching metadata fields, relative to the similarity score of 0 to 1 |
 | `RECENCY_WEIGHT` | `0.2` | Largest score the recency bonus adds; `0` turns it off |
 | `RECENCY_WINDOW_YEARS` | `10` | How many years back the recency bonus decays to zero |
-| `MAX_CONTEXT_TOKENS` | `8000` | Upper bound for the whole context sent to the LLM |
-| `RESPONSE_TOKEN_BUFFER` | `1024` | Part of the budget kept free for the answer |
+| `MAX_CONTEXT_TOKENS` | `32000` | Upper bound for the whole context sent to the LLM |
+| `RESPONSE_TOKEN_BUFFER` | `2048` | Part of the budget kept free for the answer |
 | `WEB_HOST` | `127.0.0.1` | Interface the web application binds to |
 | `WEB_PORT` | `8080` | Port the web application listens on |
 | `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING` or `ERROR` |

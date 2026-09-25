@@ -266,6 +266,10 @@ def _build_system_prompt(schema: Mapping[str, Sequence[str]]) -> str:
         rendered = [
             normalize_value(str(value)) for value in values[:MAX_VALUES_PER_FIELD]
         ]
+        # Mirrors _build_json_schema: a field without usable values is not
+        # filterable, so it must not show up in the prompt either.
+        if not rendered:
+            continue
         lines.append(f"- {normalize_key(name)}: {' | '.join(rendered)}")
     prompt = CONDENSATION_SYSTEM_PROMPT_TEMPLATE.format(
         schema_block="\n".join(lines) if lines else NO_SCHEMA_BLOCK
@@ -321,10 +325,15 @@ def _validate_boost(
     filters: dict[str, list[str]] = {}
     for raw_name, raw_values in raw.items():
         name = normalize_key(str(raw_name))
-        known = schema.get(name)
-        if known is None:
+        raw_known = schema.get(name)
+        if raw_known is None:
             LOGGER.warning("dropping unknown filter field %r", raw_name)
             continue
+        # The candidate values are normalized below, so the known values have
+        # to be normalized too: a schema published by an older embedder (or a
+        # hand-edited collection) may still hold non-lowercase values, and an
+        # exact comparison would silently drop every match.
+        known = {normalize_value(str(value)) for value in raw_known}
 
         candidates = raw_values if isinstance(raw_values, list) else [raw_values]
         values: list[str] = []
