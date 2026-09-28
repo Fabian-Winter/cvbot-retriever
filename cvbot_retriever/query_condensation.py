@@ -25,7 +25,9 @@ from typing import Any
 
 from cvbot_core.metadata import (
     MAX_SCHEMA_FIELDS,
-    MAX_VALUES_PER_FIELD,
+    MAX_VALUES_PER_FIELD,#
+    PERIOD_END_KEY,
+    PERIOD_START_KEY,
     normalize_key,
     normalize_value,
 )
@@ -86,6 +88,14 @@ CONDENSATION_SCHEMA_NAME = "condense_and_extract"
 # behaviour cannot be reproduced while the prompt is tuned. Applied to this
 # request only, so the answer generation keeps the model's own default.
 CONDENSATION_INFERENCE_CONFIG: dict[str, Any] = {"temperature": 0}
+
+# Anthropic rejects a structured-output schema once the number of properties
+# and their enum values exceed a complexity budget; dropping the
+# two raw period bounds is what brings the published schema back under it.
+# They are redundant for filtering anyway: `years` already covers every year a
+# section spans, and the recency bonus reads the period straight from the chunk
+# metadata, not from this schema.
+EXCLUDED_FILTER_FIELDS = frozenset({PERIOD_START_KEY, PERIOD_END_KEY})
 
 
 @dataclass(frozen=True)
@@ -202,10 +212,14 @@ def _extract_with_json(
 def _build_json_schema(schema: Mapping[str, Sequence[str]]) -> dict[str, Any]:
     """Builds the JSON schema the condensation answer has to conform to.
 
-    With a published schema, its fields become the properties of ``filters``
-    and their known values become enums, so neither an invented field nor an
-    invented value can even be generated. Without one, ``filters`` allows no
-    property at all and is therefore always empty.
+    Every filterable field becomes one optional array property whose items are
+    constrained to the published values, so the model cannot invent a field or
+    a value while it generates.
+
+    Fields listed in ``EXCLUDED_FILTER_FIELDS`` are skipped: they remain
+    visible in the system prompt, but the enforced grammar does not offer them.
+    Because ``additionalProperties`` is false, the model can therefore not
+    return them at all - which is intended, since they only duplicate ``years``.
 
     Args:
         schema: Filterable fields mapped onto their known values.
@@ -215,6 +229,8 @@ def _build_json_schema(schema: Mapping[str, Sequence[str]]) -> dict[str, Any]:
     """
     properties: dict[str, Any] = {}
     for name, values in sorted(schema.items())[:MAX_SCHEMA_FIELDS]:
+        if name in EXCLUDED_FILTER_FIELDS:
+            continue
         allowed = list(
             dict.fromkeys(
                 normalize_value(str(value)) for value in values[:MAX_VALUES_PER_FIELD]

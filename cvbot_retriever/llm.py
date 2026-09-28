@@ -8,11 +8,24 @@ from collections.abc import Sequence
 from typing import Any
 
 import boto3
+from botocore.config import Config
 
 from .config import Settings
 from .conversation import ROLE_USER, Message
 
 LOGGER = logging.getLogger(__name__)
+
+# A rejected request is retried by botocore before the error surfaces, and each
+# attempt may wait out the full read timeout. With the defaults (60 s, 5 tries)
+# a permanently failing call blocks a request for minutes, long after the API
+# Gateway gave up on the caller. Two attempts keep the worst case near two
+# minutes while still leaving room for the first call against a fresh schema,
+# which Bedrock has to compile before it can answer.
+BEDROCK_CLIENT_CONFIG = Config(
+    read_timeout=60,
+    connect_timeout=10,
+    retries={"max_attempts": 2, "mode": "standard"},
+)
 
 
 class BedrockLLMClient:
@@ -38,6 +51,7 @@ class BedrockLLMClient:
         self._client = client or boto3.client(
             "bedrock-runtime",
             region_name=settings.aws_region,
+            config=BEDROCK_CLIENT_CONFIG,
         )
         LOGGER.info(
             "Bedrock LLM: model_id=%s region=%s",
