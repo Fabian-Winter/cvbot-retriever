@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -795,3 +796,52 @@ def test_no_endpoint_exposes_the_system_prompt(client: TestClient) -> None:
     for body in bodies:
         for line in _system_prompt_lines():
             assert line not in body
+
+def test_a_bedrock_timeout_yields_its_own_message(settings: Settings) -> None:
+    error = botocore.exceptions.ReadTimeoutError(
+        endpoint_url="https://bedrock-runtime.eu-central-1.amazonaws.com"
+    )
+    client = TestClient(
+        create_app(settings, engine_factory=engine_factory(error=error))
+    )
+    response = ask(client, new_id(), "Wie alt ist er?")
+    assert response.status_code == 504
+    assert response.json() == {"detail": webapp.ANSWER_SERVICE_TIMEOUT}
+    _assert_no_internals(response.text, error)
+
+
+def test_a_busy_conversation_is_refused_instead_of_blocking(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(webapp, "CONVERSATION_LOCK_TIMEOUT_SECONDS", 0)
+    blocked = threading.Event()
+
+    def slow(question: str) -> str:
+        blocked.wait(timeout=5)
+        return ANSWER
+
+    client = TestClient(
+        create_app(settings, engine_factory=engine_factory(responder=slow))
+    )
+    conversation_id = new_id()
+    worker = threading.Thread(target=ask, args=(client, conversation_id, "Erste"))
+    worker.start()
+    try:
+        response = ask(client, conversation_id, "Zweite")
+        assert response.status_code == 503
+        assert response.json() == {"detail": webapp.CONVERSATION_BUSY}
+    finally:
+        blocked.set()
+        worker.join()
+
+
+def test_the_lock_is_released_after_a_failure(settings: Settings) -> None:
+    # Ohne finally würde der zweite Aufruf am Lock des ersten hängen.
+    client = TestClient(
+        create_app(
+            settings, engine_factory=engine_factory(error=RuntimeError("boom"))
+        )
+    )
+    conversation_id = new_id()
+    assert ask(client, conversation_id, "Erste").status_code == 500
+    assert ask(client, conversation_id, "Zweite").status_code == 500

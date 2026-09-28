@@ -11,7 +11,7 @@ from cvbot_retriever import __main__ as cli
 from cvbot_retriever import pipeline
 from cvbot_retriever.config import Settings
 from cvbot_retriever.conversation import ROLE_USER, InMemoryConversationStore, Message
-from cvbot_retriever.llm import BedrockLLMClient
+from cvbot_retriever.llm import BedrockLLMClient, CONDENSATION_CLIENT_CONFIG
 from cvbot_retriever.prompts import (
     QUESTION_END,
     QUESTION_START,
@@ -56,6 +56,22 @@ class EchoingBedrockRuntime(FakeBedrockRuntime):
         }
 
 
+def llm_factory(runtime: FakeBedrockRuntime):
+    """Builds a replacement for ``pipeline.BedrockLLMClient``.
+
+    The engine creates two clients - one for the answer and one with the
+    tighter condensation budget - so the replacement has to accept the
+    ``config`` keyword. Both share the same double, which keeps the call
+    counts of the existing tests meaningful.
+
+    Args:
+        runtime: The Bedrock double both clients talk to.
+
+    Returns:
+        A callable usable as ``pipeline.BedrockLLMClient``.
+    """
+    return lambda settings, **kwargs: BedrockLLMClient(settings, client=runtime)
+
 @pytest.fixture
 def patched_pipeline(
     monkeypatch: pytest.MonkeyPatch, fake_embeddings: FakeEmbeddings
@@ -88,6 +104,7 @@ def patched_pipeline(
         "BedrockLLMClient",
         lambda s: BedrockLLMClient(s, client=runtime),
     )
+    monkeypatch.setattr(pipeline, "BedrockLLMClient", llm_factory(runtime))
     return runtime
 
 
@@ -218,9 +235,7 @@ def test_a_published_schema_costs_exactly_one_extra_call_on_the_first_turn(
         lambda model_id, region_name: fake_embeddings,
     )
     monkeypatch.setattr(pipeline, "open_collection", lambda c, name, emb: store)
-    monkeypatch.setattr(
-        pipeline, "BedrockLLMClient", lambda s: BedrockLLMClient(s, client=runtime)
-    )
+    monkeypatch.setattr(pipeline, "BedrockLLMClient", llm_factory(runtime))
 
     pipeline.ConversationEngine(settings).answer("c1", "Was war 2020?")
 
@@ -255,9 +270,7 @@ def test_extracted_filters_overfetch_before_re_ranking(
         lambda model_id, region_name: fake_embeddings,
     )
     monkeypatch.setattr(pipeline, "open_collection", lambda c, name, emb: store)
-    monkeypatch.setattr(
-        pipeline, "BedrockLLMClient", lambda s: BedrockLLMClient(s, client=runtime)
-    )
+    monkeypatch.setattr(pipeline, "BedrockLLMClient", llm_factory(runtime))
     tuned = settings.with_overrides(top_k=2, overfetch_factor=3)
 
     pipeline.ConversationEngine(tuned).answer("c1", "Was war 2020?")
@@ -288,9 +301,7 @@ def test_retrieval_uses_the_condensed_query_on_a_later_turn(
         lambda model_id, region_name: fake_embeddings,
     )
     monkeypatch.setattr(pipeline, "open_collection", lambda c, name, emb: store)
-    monkeypatch.setattr(
-        pipeline, "BedrockLLMClient", lambda s: BedrockLLMClient(s, client=runtime)
-    )
+    monkeypatch.setattr(pipeline, "BedrockLLMClient", llm_factory(runtime))
     engine = pipeline.ConversationEngine(settings)
 
     engine.answer("c1", "Erste Frage?")
@@ -396,9 +407,7 @@ def test_injection_attempt_does_not_expose_the_system_prompt(
     patched_pipeline: FakeBedrockRuntime,
 ) -> None:
     echoing = EchoingBedrockRuntime()
-    monkeypatch.setattr(
-        pipeline, "BedrockLLMClient", lambda s: BedrockLLMClient(s, client=echoing)
-    )
+    monkeypatch.setattr(pipeline, "BedrockLLMClient", llm_factory(echoing))
 
     result = pipeline.ConversationEngine(settings).answer("c1", INJECTION)
 

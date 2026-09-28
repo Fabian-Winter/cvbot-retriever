@@ -17,7 +17,7 @@ from .conversation import (
     InMemoryConversationStore,
     Message,
 )
-from .llm import BedrockLLMClient
+from .llm import BedrockLLMClient, CONDENSATION_CLIENT_CONFIG
 from .prompts import SYSTEM_PROMPT, build_user_message
 from .query_condensation import condense_and_extract
 from .retriever import retrieve
@@ -88,6 +88,7 @@ class ConversationEngine:
             client, settings.collection_name, embeddings
         )
         self._llm = BedrockLLMClient(settings)
+        self._condensation_llm = BedrockLLMClient(settings, config=CONDENSATION_CLIENT_CONFIG)
 
     @property
     def store(self) -> ConversationStore:
@@ -123,7 +124,7 @@ class ConversationEngine:
         conversation = self._store.load(conversation_id)
         history = conversation.history()
         condensed = condense_and_extract(
-            self._llm, history, question, self._metadata_schema
+            self._condensation_llm, history, question, self._metadata_schema
         )
         chunks = retrieve(
             self._collection,

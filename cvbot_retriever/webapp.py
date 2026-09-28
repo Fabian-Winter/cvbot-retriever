@@ -52,6 +52,10 @@ ANSWER_SERVICE_UNAVAILABLE = (
     "Der Antwortdienst ist derzeit nicht erreichbar. "
     "Bitte versuche es in einem Moment noch einmal."
 )
+ANSWER_SERVICE_TIMEOUT = (
+    "Die Antwort hat zu lange gedauert. "
+    "Bitte stelle die Frage noch einmal."
+)
 UNEXPECTED_ERROR = (
     "Die Frage konnte nicht beantwortet werden. "
     "Bitte versuche es in einem Moment noch einmal."
@@ -74,6 +78,13 @@ _ANSWER_SERVICE_ERRORS = (
 )
 
 EngineFactory = Callable[[Settings, ConversationStore], ConversationEngine]
+
+CONVERSATION_LOCK_TIMEOUT_SECONDS = 20
+
+CONVERSATION_BUSY = (
+    "Die vorherige Frage wird noch verarbeitet. "
+    "Bitte warte einen Moment und versuche es dann erneut."
+)
 
 
 def _is_valid_conversation_id(conversation_id: str) -> bool:
@@ -403,18 +414,30 @@ def create_app(
             LOGGER.exception("building the conversation engine failed")
             return _error(503, KNOWLEDGE_BASE_UNAVAILABLE)
 
+        lock = locks.get(conversation_id)
+        if not lock.acquire(timeout=CONVERSATION_LOCK_TIMEOUT_SECONDS):
+            LOGGER.warning("conversation %s is still busy", conversation_id)
+            return _error(
+                503,
+                CONVERSATION_BUSY,
+                headers={"Retry-After": str(CONVERSATION_LOCK_TIMEOUT_SECONDS)},
+            )
         try:
-            with locks.get(conversation_id):
-                result = engine.answer(conversation_id, payload.question)
+            result = engine.answer(conversation_id, payload.question)
         except _KNOWLEDGE_BASE_ERRORS:
             LOGGER.exception("the vector store did not answer")
             return _error(503, KNOWLEDGE_BASE_UNAVAILABLE)
+        except botocore.exceptions.ReadTimeoutError:
+            LOGGER.warning("bedrock did not answer in time")
+            return _error(504, ANSWER_SERVICE_TIMEOUT)
         except _ANSWER_SERVICE_ERRORS:
             LOGGER.exception("bedrock did not answer")
             return _error(503, ANSWER_SERVICE_UNAVAILABLE)
         except Exception:
             LOGGER.exception("answering failed")
             return _error(500, UNEXPECTED_ERROR)
+        finally:
+            lock.release()
 
         conversation = store.load(conversation_id)
         return ChatResponse(

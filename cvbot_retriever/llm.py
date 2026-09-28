@@ -27,6 +27,15 @@ BEDROCK_CLIENT_CONFIG = Config(
     retries={"max_attempts": 2, "mode": "standard"},
 )
 
+# Condensation is optional and should not block the main request. A short timeout
+# and no retry is used to avoid blocking the main request for too long if
+# condensation fails.
+CONDENSATION_CLIENT_CONFIG = Config(
+    connect_timeout=5,
+    read_timeout=10,
+    retries={"max_attempts": 1, "mode": "standard"},
+)
+
 
 class BedrockLLMClient:
     """Generates text with a Bedrock model through the Converse API.
@@ -36,7 +45,7 @@ class BedrockLLMClient:
     and truncation of the history are handled by the calling pipeline.
     """
 
-    def __init__(self, settings: Settings, client: Any | None = None) -> None:
+    def __init__(self, settings: Settings, client: Any | None = None, config: Config = BEDROCK_CLIENT_CONFIG) -> None:
         """Initializes the client.
 
         AWS credentials are resolved through the usual boto3 chain (environment
@@ -51,7 +60,7 @@ class BedrockLLMClient:
         self._client = client or boto3.client(
             "bedrock-runtime",
             region_name=settings.aws_region,
-            config=BEDROCK_CLIENT_CONFIG,
+            config=config,
         )
         LOGGER.info(
             "Bedrock LLM: model_id=%s region=%s",
