@@ -815,8 +815,10 @@ def test_a_busy_conversation_is_refused_instead_of_blocking(
 ) -> None:
     monkeypatch.setattr(webapp, "CONVERSATION_LOCK_TIMEOUT_SECONDS", 0)
     blocked = threading.Event()
+    started = threading.Event()
 
     def slow(question: str) -> str:
+        started.set()
         blocked.wait(timeout=5)
         return ANSWER
 
@@ -827,6 +829,7 @@ def test_a_busy_conversation_is_refused_instead_of_blocking(
     worker = threading.Thread(target=ask, args=(client, conversation_id, "Erste"))
     worker.start()
     try:
+        assert started.wait(timeout=5), "die erste Anfrage erreichte die Engine nie"
         response = ask(client, conversation_id, "Zweite")
         assert response.status_code == 503
         assert response.json() == {"detail": webapp.CONVERSATION_BUSY}
