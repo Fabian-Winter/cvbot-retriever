@@ -1,6 +1,7 @@
 @startuml
 skinparam classAttributeIconSize 0
 hide empty members
+left to right direction
 
 !include _retriever-classes.iuml
 
