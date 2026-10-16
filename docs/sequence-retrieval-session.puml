@@ -30,7 +30,7 @@ note right of web
   VPC Link and Cloud Map.
 end note
 
-== First question ==
+== Ask question ==
 visitor -> browser : types a question
 browser -> browser : show question,\nshow pending bubble
 browser -> apigw : fetch POST /api/conversations/{id}/messages
@@ -42,23 +42,6 @@ ref over web, engine
 end ref
 web --> browser : 200 ChatResponse
 browser -> browser : render answer as Markdown\n(sanitized)
-browser --> visitor : answer
-
-== Follow-up question ==
-visitor -> browser : "and before that?"
-browser -> apigw : fetch POST /api/conversations/{id}/messages
-apigw -> web
-web -> engine : answer(conversation_id, question)
-engine -> store : load(conversation_id)
-store --> engine : history with earlier turns
-note over engine
-  The history resolves the reference
-  during query condensation and is trimmed
-  to the token budget for the model.
-end note
-engine -> store : save(conversation, 4 turns)
-engine --> web : AnswerResult
-web --> browser : 200 ChatResponse
 browser --> visitor : answer
 
 == Error during a turn ==
