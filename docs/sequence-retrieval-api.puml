@@ -1,0 +1,118 @@
+@startuml
+title API call: answering a question (POST /api/conversations/{id}/messages)
+autonumber
+
+actor "API client" as client
+participant "API Gateway" as apigw
+participant "webapp\n(FastAPI)" as web
+participant "SlidingWindow-\nRateLimiter" as limiter
+participant "EngineProvider" as provider
+participant "ConversationEngine" as engine
+participant "ConversationStore\n(in-memory)" as store
+participant "query_condensation" as cond
+participant "BedrockLLMClient" as llm
+participant "retriever /\nranking" as retriever
+participant "vector_store\n(Chroma collection)" as coll
+participant "ChromaDB\n(Fargate)" as chroma
+participant "AWS Bedrock" as bedrock
+
+== Optional: request a conversation id ==
+client -> apigw : POST /api/conversations
+apigw -> web
+web -> limiter : check(client_key)
+limiter --> web : RateLimitDecision
+alt allowed
+  web --> client : 200 NewConversationResponse(uuid4)
+else over budget
+  web --> client : 429 + Retry-After
+end
+
+== Ask a question ==
+client -> apigw : POST /api/conversations/{id}/messages\n{"question": "..."}
+apigw -> web : forwards request\n(X-Forwarded-For)
+
+alt malformed id or invalid payload
+  web --> client : 400 error detail
+end
+
+web -> limiter : check(client_key)
+alt over budget
+  limiter --> web : rejected
+  web --> client : 429 + Retry-After
+end
+limiter --> web : allowed
+
+web -> provider : get()
+opt first request (engine not built yet)
+  provider -> engine : create(settings, store)
+  engine -> chroma : read embedding model id\nand metadata schema of the collection
+  chroma --> engine : model id, schema
+  engine -> engine : build Bedrock embeddings\n(model id from collection),\nopen collection (read only),\ncreate answer + condensation LLM clients
+end
+alt backends unreachable
+  provider --> web : exception (not cached)
+  web --> client : 503 knowledge base unavailable
+end
+provider --> web : ConversationEngine
+
+web -> web : acquire conversation lock\n(timeout 20 s)
+alt lock not acquired
+  web --> client : 503 busy + Retry-After
+end
+
+web -> engine : answer(conversation_id, question)
+engine -> store : load(conversation_id)
+store --> engine : Conversation (full history)
+
+== 1. Query condensation ==
+engine -> cond : condense_and_extract(history, question, schema)
+opt history or schema available
+  cond -> llm : generate_json(messages, system, json_schema)
+  llm -> bedrock : Converse (structured output,\ntemperature 0, short timeout)
+  bedrock --> llm : JSON {query, filters}
+  llm --> cond : parsed object
+  cond -> cond : validate filters against schema
+end
+note right of cond
+  On any failure the original question
+  is used with empty filters.
+end note
+cond --> engine : CondensationResult(query, boost)
+
+== 2. Retrieval and re-ranking ==
+engine -> retriever : retrieve(collection, query, top_k,\nRankingConfig, boost)
+retriever -> coll : similarity_search_with_score(query,\nk = top_k * overfetch_factor)
+coll -> bedrock : InvokeModel (embed_query)
+bedrock --> coll : query vector
+coll -> chroma : query (HNSW, cosine)
+chroma --> coll : chunks + distances
+coll --> retriever : list[(Document, distance)]
+retriever -> retriever : rerank: relevance + boost + recency
+retriever --> engine : top_k Documents
+
+== 3. Context and generation ==
+engine -> engine : build_user_message(question, chunks)
+engine -> engine : build_context(system prompt, history,\ncurrent message, token budget)\n(drops oldest history turns if needed)
+engine -> llm : generate(context, SYSTEM_PROMPT)
+llm -> bedrock : Converse (read timeout 60 s,\n2 attempts)
+bedrock --> llm : answer text
+llm --> engine : answer
+
+engine -> store : save(conversation + user turn\n+ assistant turn)
+engine --> web : AnswerResult
+web -> web : release conversation lock
+
+alt vector store error
+  web --> client : 503 knowledge base unavailable
+else Bedrock read timeout
+  web --> client : 504 answer took too long
+else other Bedrock error
+  web --> client : 503 answer service unavailable
+else unexpected error
+  web --> client : 500
+else success
+  web -> store : load(conversation_id)
+  store --> web : full visible history
+  web --> client : 200 ChatResponse\n(answer + messages)
+end
+@enduml

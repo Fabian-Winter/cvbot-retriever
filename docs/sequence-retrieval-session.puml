@@ -1,0 +1,82 @@
+@startuml
+title App session: chat in the browser
+autonumber
+
+actor "Visitor" as visitor
+participant "Browser\n(chat.html + JS)" as browser
+participant "API Gateway" as apigw
+participant "webapp\n(FastAPI)" as web
+participant "ConversationStore\n(in-memory)" as store
+participant "ConversationEngine" as engine
+
+== Start of a session ==
+visitor -> browser : opens the site
+browser -> apigw : GET /
+apigw -> web
+web --> browser : 303 redirect to /c/{uuid4}
+browser -> apigw : GET /c/{uuid4}
+apigw -> web
+web -> store : load(conversation_id)
+store --> web : empty Conversation
+web --> browser : chat page (history rendered server side)
+note right of web
+  The page does not need the backends:
+  the history is read from the store only.
+end note
+
+== First question ==
+visitor -> browser : types a question
+browser -> browser : show question,\nshow pending bubble
+browser -> apigw : fetch POST /api/conversations/{id}/messages
+apigw -> web
+ref over web, engine
+  Answer flow:
+  see sequence-retrieval-api.puml
+  (rate limit, condensation, retrieval, generation)
+end ref
+web -> store : load(conversation_id)
+store --> web : 2 turns
+web --> browser : 200 ChatResponse
+browser -> browser : render answer as Markdown\n(sanitized)
+browser --> visitor : answer
+
+== Follow-up question ==
+visitor -> browser : "and before that?"
+browser -> apigw : fetch POST /api/conversations/{id}/messages
+apigw -> web
+web -> engine : answer(conversation_id, question)
+engine -> store : load(conversation_id)
+store --> engine : history with earlier turns
+note over engine
+  The history resolves the reference
+  during query condensation and is trimmed
+  to the token budget for the model.
+end note
+engine -> store : save(conversation, 4 turns)
+engine --> web : AnswerResult
+web --> browser : 200 ChatResponse
+browser --> visitor : answer
+
+== Error during a turn ==
+browser -> apigw : fetch POST /api/conversations/{id}/messages
+apigw -> web
+web --> browser : 4xx / 5xx {detail}
+browser -> browser : replace pending bubble\nby error message
+browser --> visitor : message, input enabled again
+
+== Reload or return ==
+visitor -> browser : reloads /c/{uuid4}
+browser -> apigw : GET /c/{uuid4}
+apigw -> web
+alt id is not a UUID4
+  web --> browser : 303 redirect to /
+else conversation known
+  web -> store : load(conversation_id)
+  store --> web : full history
+  web --> browser : chat page with earlier turns
+else idle longer than TTL or evicted (LRU)
+  web -> store : load(conversation_id)
+  store --> web : new empty Conversation
+  web --> browser : empty chat page
+end
+@enduml

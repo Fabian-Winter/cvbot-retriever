@@ -1,0 +1,56 @@
+@startuml
+skinparam classAttributeIconSize 0
+hide empty members
+
+!include _retriever-classes.iuml
+
+package "third party" <<external>> {
+  class Document <<langchain>> {
+    +page_content: str
+    +metadata: dict
+  }
+  interface Embeddings <<langchain>>
+  class Chroma <<langchain-chroma>>
+  class ClientAPI <<chromadb>>
+  class "bedrock-runtime client" as BedrockClient <<boto3>> {
+    +converse(**request): dict
+  }
+  class FastAPI <<fastapi>>
+  class BaseModel <<pydantic>>
+  class uvicorn <<module>>
+}
+
+interface VectorStoreReader <<Protocol, cvbot_core>> {
+  +similarity_search_with_score(query, k): list[tuple[Document, float]]
+}
+
+main ..> uvicorn : runs the app
+webapp ..> FastAPI : creates
+
+vstore ..> ClientAPI : returns
+vstore ..> Chroma : creates
+vstore ..> Embeddings
+ConversationEngine o-- Chroma : collection
+ConversationEngine ..> Embeddings : builds query embeddings
+
+Chroma ..|> VectorStoreReader
+Chroma o-- Embeddings
+Chroma o-- ClientAPI
+
+retriever ..> VectorStoreReader : reads through
+retriever ..> Document : returns
+ranking ..> Document
+prompts ..> Document : renders chunks
+AnswerResult o-- "*" Document : chunks
+
+BedrockLLMClient --> BedrockClient : Converse API
+
+ChatRequest --|> BaseModel
+ChatResponse --|> BaseModel
+ConversationResponse --|> BaseModel
+NewConversationResponse --|> BaseModel
+MessageOut --|> BaseModel
+ErrorResponse --|> BaseModel
+
+remove @unlinked
+@enduml

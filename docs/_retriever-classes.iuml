@@ -1,0 +1,180 @@
+package "cvbot_retriever" {
+  class "__main__" as main <<module>> {
+    +main(argv): int
+    -_serve(settings): int
+  }
+
+  class "webapp" as webapp <<module>> {
+    +create_app(settings, engine_factory): FastAPI
+    -_is_valid_conversation_id(id): bool
+    -_client_key(request, trust_forwarded_for): str
+    -_error(status_code, detail, headers): JSONResponse
+  }
+
+  class EngineProvider <<_EngineProvider>> {
+    +__init__(settings, store, engine_factory)
+    +store: ConversationStore
+    +get(): ConversationEngine
+  }
+
+  class ConversationLocks <<_ConversationLocks>> {
+    +__init__(max_locks)
+    +get(conversation_id): Lock
+  }
+
+  class Settings <<frozen dataclass>> {
+    +chroma_host, chroma_port, collection_name
+    +aws_region, llm_model_id
+    +top_k, overfetch_factor
+    +filter_weight, recency_weight, recency_window_years
+    +max_context_tokens, response_token_buffer
+    +web_host, web_port, log_level
+    +rate_limit_per_minute, rate_limit_per_hour
+    +trust_forwarded_for, cors_allowed_origins
+    +conversation_ttl_seconds, max_conversations
+    +{static} from_env(env): Settings
+    +ranking_config(): RankingConfig
+    +with_overrides(**overrides): Settings
+  }
+
+  class RankingConfig <<frozen dataclass>> {
+    +overfetch_factor: int
+    +filter_weight: float
+    +recency_weight: float
+    +recency_window_years: int
+  }
+
+  class "pipeline" as pipeline <<module>> {
+    +answer_question(settings, question): AnswerResult
+  }
+
+  class ConversationEngine {
+    +__init__(settings, store)
+    +store: ConversationStore
+    +answer(conversation_id, question): AnswerResult
+  }
+
+  class AnswerResult <<frozen dataclass>> {
+    +question: str
+    +answer: str
+    +chunks: list[Document]
+    +conversation_id: str
+  }
+
+  class "query_condensation" as condensation <<module>> {
+    +condense_and_extract(llm, history, question, schema): CondensationResult
+    -_extract_with_json(...)
+    -_build_json_schema(schema)
+    -_build_system_prompt(schema)
+    -_validate_boost(raw, schema)
+  }
+
+  class CondensationResult <<frozen dataclass>> {
+    +query: str
+    +boost: dict[str, list[str]]
+  }
+
+  class "retriever" as retriever <<module>> {
+    +retrieve(store, question, top_k, config, boost): list[Document]
+  }
+
+  class "ranking" as ranking <<module>> {
+    +rerank(candidates, config, boost): list[Document]
+    -_total_score(...)
+    -_relevance(distance)
+    -_boost_factor(chunk, boost)
+    -_recency_factor(metadata, now_year, window_years)
+  }
+
+  class "context" as context <<module>> {
+    +build_context(system_prompt, history, current_message, budgets): list[Message]
+  }
+
+  class "prompts" as prompts <<module>> {
+    +SYSTEM_PROMPT: str
+    +build_user_message(question, chunks): str
+  }
+
+  class "tokens" as tokens <<module>> {
+    +count_tokens(text): int
+    +count_message_tokens(messages): int
+  }
+
+  class BedrockLLMClient {
+    +__init__(settings, client, config)
+    +generate(messages, system, inference_config): str
+    +generate_json(messages, system, json_schema, schema_name, inference_config): dict
+    -_converse(...)
+  }
+
+  class Message <<frozen dataclass>> {
+    +role: str
+    +content: str
+    +to_converse(): dict
+  }
+
+  class Conversation <<dataclass>> {
+    +conversation_id: str
+    +messages: list[Message]
+    +add_user(content): Message
+    +add_assistant(content): Message
+    +history(): list[Message]
+  }
+
+  interface ConversationStore <<Protocol>> {
+    +load(conversation_id): Conversation
+    +save(conversation)
+  }
+
+  class InMemoryConversationStore {
+    +__init__(ttl_seconds, max_conversations, time_source)
+    +load(conversation_id): Conversation
+    +save(conversation)
+    -_expire()
+  }
+
+  class StoreEntry <<_Entry>> {
+    +conversation: Conversation
+    +touched_at: float
+  }
+
+  class SlidingWindowRateLimiter {
+    +__init__(per_minute, per_hour, time_source, max_clients)
+    +check(client_key): RateLimitDecision
+  }
+
+  class RateLimitDecision <<frozen dataclass>> {
+    +allowed: bool
+    +retry_after: int
+  }
+
+  class "vector_store" as vstore <<module>> {
+    +create_client(settings): ClientAPI
+    +get_indexed_embedding_model_id(client, collection_name): str
+    +get_indexed_metadata_schema(client, collection_name): dict
+    +open_collection(client, collection_name, embeddings): Chroma
+  }
+
+  package "schemas" <<module>> {
+    class ChatRequest <<pydantic>> {
+      +question: str
+    }
+    class ChatResponse <<pydantic>> {
+      +conversation_id, answer: str
+      +messages: list[MessageOut]
+    }
+    class ConversationResponse <<pydantic>> {
+      +conversation_id: str
+      +messages: list[MessageOut]
+    }
+    class NewConversationResponse <<pydantic>> {
+      +conversation_id: str
+    }
+    class MessageOut <<pydantic>> {
+      +role, content: str
+    }
+    class ErrorResponse <<pydantic>> {
+      +detail: str
+    }
+  }
+}

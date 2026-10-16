@@ -1,0 +1,45 @@
+@startuml
+skinparam classAttributeIconSize 0
+hide empty members
+
+!include _retriever-classes.iuml
+
+main ..> Settings : builds
+main ..> webapp : create_app
+main ..> ConversationEngine : answers once\n(without --serve)
+
+webapp ..> Settings
+webapp ..> EngineProvider : creates
+webapp ..> ConversationLocks : creates
+webapp ..> SlidingWindowRateLimiter : creates
+webapp ..> InMemoryConversationStore : creates
+webapp ..> ChatRequest : validates
+webapp ..> ChatResponse : returns
+webapp ..> ConversationResponse : returns
+webapp ..> NewConversationResponse : returns
+webapp ..> ErrorResponse : returns
+
+SlidingWindowRateLimiter ..> RateLimitDecision : returns
+
+EngineProvider o-- ConversationEngine : shares one instance
+EngineProvider o-- ConversationStore
+EngineProvider ..> Settings
+
+pipeline ..> ConversationEngine : creates
+pipeline ..> AnswerResult : returns
+
+ConversationEngine --> Settings
+ConversationEngine --> ConversationStore
+ConversationEngine ..> AnswerResult : returns
+
+InMemoryConversationStore ..|> ConversationStore
+
+note bottom of ConversationEngine
+  The collection, the embedding model and both
+  Bedrock clients are created once per engine.
+  See classes-retriever-retrieval.puml
+  for the stages the engine orchestrates.
+end note
+
+remove @unlinked
+@enduml

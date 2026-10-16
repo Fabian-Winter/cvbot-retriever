@@ -1,0 +1,35 @@
+@startuml
+skinparam classAttributeIconSize 0
+hide empty members
+
+!include _retriever-classes.iuml
+
+ConversationEngine ..> condensation : 1. condense_and_extract
+ConversationEngine ..> retriever : 2. retrieve
+ConversationEngine ..> prompts : 3. build_user_message
+ConversationEngine ..> context : 4. build_context
+ConversationEngine --> BedrockLLMClient : answer client
+ConversationEngine --> BedrockLLMClient : condensation client\n(short timeout, no retry)
+ConversationEngine ..> vstore : opens collection,\nreads model id and schema
+ConversationEngine --> Settings
+
+condensation ..> BedrockLLMClient : generate_json
+condensation ..> CondensationResult : returns
+
+retriever ..> ranking : rerank
+retriever ..> RankingConfig
+
+ranking ..> RankingConfig
+
+Settings ..> RankingConfig : ranking_config()
+
+BedrockLLMClient ..> Settings : model id, region
+
+note bottom of retriever
+  Over-fetches top_k * overfetch_factor candidates
+  so that boost and recency can promote a chunk
+  from further down the similarity ranking.
+end note
+
+remove @unlinked
+@enduml

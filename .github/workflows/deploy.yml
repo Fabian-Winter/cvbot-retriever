@@ -21,6 +21,9 @@ on:
     branches: [main]
     paths:
       - 'cvbot_retriever/**'
+      - 'tests/**'
+      - 'docs/*.iuml'
+      - 'docs/*.puml'
       - 'requirements.txt'
       - 'Dockerfile'
       - '.dockerignore'
@@ -217,3 +220,53 @@ jobs:
               echo 'The service was stopped and stays stopped. Run the "Start or stop web app" workflow with `start` to bring it up on this revision.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  render-diagrams:
+    name: Render PlantUML diagrams
+    needs: python-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Generate App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Install PlantUML
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq graphviz
+          dot -V
+          curl -fL -o plantuml.jar https://github.com/plantuml/plantuml/releases/download/v1.2026.8/plantuml-1.2026.8.jar
+          file plantuml.jar
+          java -version
+          java -jar plantuml.jar -version
+
+      - name: Render docs/*.puml to PNG
+        run: |
+          set -euo pipefail
+          java -jar plantuml.jar -tpng -o . docs/*.puml
+
+      - name: Commit and push the diagrams
+        run: |
+          set -euo pipefail
+          git config user.name "repo-push-bot"
+          git config user.email "repo-push-bot@users.noreply.github.com"
+          if git diff --quiet -- docs && [ -z "$(git ls-files --others --exclude-standard -- docs)" ]; then
+            echo 'diagrams unchanged' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git add -- docs
+          git commit -m "docs: render PlantUML"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo 'rendered diagrams pushed' >> "$GITHUB_STEP_SUMMARY"

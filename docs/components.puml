@@ -1,0 +1,68 @@
+@startuml
+left to right direction
+
+actor "Visitor" as user
+cloud "AWS Bedrock\n(embeddings + LLM)" as bedrock
+cloud "GitHub Actions\n(deploy.yml, OIDC)" as gha
+
+rectangle "AWS Account" {
+  component "API Gateway\n(HTTP API, $default stage,\nthrottling)" as apigw
+  component "VPC Link" as vpclink
+  component "Cloud Map\n(cvbot.internal)" as cloudmap
+
+  package "ECS Cluster (Fargate)" {
+    component "webapp service\n(cvbot-retriever)" as webapp {
+      component "__main__\n(--serve)" as main
+      component "webapp\n(FastAPI app)" as web
+      component "ratelimit" as ratelimit
+      component "conversation\n(in-memory store)" as conversation
+      component "pipeline\n(ConversationEngine)" as pipeline
+      component "query_condensation" as condensation
+      component "retriever" as retriever
+      component "ranking" as ranking
+      component "prompts / context" as context
+      component "llm\n(BedrockLLMClient)" as llm
+      component "vector_store" as vstore
+    }
+    component "chroma service\n(ChromaDB)" as chroma
+  }
+
+  component "ECR\n(cvbot-webapp)" as ecr
+  database "EFS\n(chroma-data)" as efs
+}
+
+user --> apigw : HTTPS
+apigw --> vpclink
+vpclink --> cloudmap : webapp (SRV)
+cloudmap --> web : routes to task
+webapp --> cloudmap : resolves\nchroma.cvbot.internal
+cloudmap --> chroma : A record
+chroma --> efs : persists vectors
+ecr --> webapp : container image
+
+gha --> ecr : push image
+gha ..> webapp : register task definition,\nupdate service
+
+main --> web : create_app
+web --> ratelimit : check client
+web --> conversation : load history
+web --> pipeline : answer
+pipeline --> condensation : standalone query,\nboost fields
+pipeline --> retriever : retrieve
+pipeline --> context : build user message,\nfit token budget
+pipeline --> llm : generate
+pipeline --> conversation : save turn
+pipeline --> vstore : open collection
+retriever --> ranking : rerank
+retriever --> vstore : similarity search
+condensation --> llm : generate_json
+
+vstore --> chroma : HTTP\n(CHROMA_HOST:CHROMA_PORT)
+vstore ..> bedrock : embed_query
+llm ..> bedrock : Converse API
+
+note bottom of chroma
+  The collection is written by
+  cvbot-embedder; the webapp only reads it.
+end note
+@enduml

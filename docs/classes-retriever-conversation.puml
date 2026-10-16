@@ -1,0 +1,37 @@
+@startuml
+skinparam classAttributeIconSize 0
+hide empty members
+
+!include _retriever-classes.iuml
+
+Conversation "1" *-- "*" Message
+
+ConversationStore ..> Conversation : load / save
+InMemoryConversationStore ..|> ConversationStore
+InMemoryConversationStore "1" *-- "*" StoreEntry : LRU + idle TTL
+StoreEntry o-- Conversation
+
+ConversationEngine --> ConversationStore
+ConversationEngine ..> Message : creates user message
+ConversationEngine ..> prompts : build_user_message
+ConversationEngine ..> context : build_context
+
+context ..> Message : trims history
+context ..> tokens
+tokens ..> Message : count_message_tokens
+
+BedrockLLMClient ..> Message : to_converse()
+
+webapp ..> ConversationStore : load history
+webapp ..> MessageOut : to_messages_out
+ChatResponse o-- "*" MessageOut
+ConversationResponse o-- "*" MessageOut
+MessageOut ..> Message : built from
+
+note bottom of Conversation
+  The full history is never truncated.
+  build_context derives a shorter view for the model.
+end note
+
+remove @unlinked
+@enduml

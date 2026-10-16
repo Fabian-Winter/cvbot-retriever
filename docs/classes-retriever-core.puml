@@ -1,0 +1,56 @@
+@startuml
+skinparam classAttributeIconSize 0
+hide empty members
+
+!include _retriever-classes.iuml
+
+package "cvbot_core (shared library)" {
+  class "embeddings" as coreEmb <<module>> {
+    +build_bedrock_embeddings(model_id, region_name)
+  }
+  class "vector_store" as coreVs <<module>> {
+    +create_chroma_client(host, port)
+    +read_embedding_model_id(client, collection_name)
+    +read_metadata_schema(client, collection_name)
+    +DEFAULT_CHROMA_HOST, DEFAULT_CHROMA_PORT
+    +DEFAULT_COLLECTION_NAME
+  }
+  class "metadata" as coreMeta <<module>> {
+    +normalize_key(), normalize_value()
+    +split_values()
+    +period_end_year(), current_year()
+    +MAX_SCHEMA_FIELDS, MAX_VALUES_PER_FIELD
+  }
+  class "env / validation / overrides" as coreCfg <<module>> {
+    +read_str(), read_int(), read_float()
+    +read_bool(), read_csv()
+    +require_*()
+    +apply_overrides()
+  }
+  class "tokens" as coreTok <<module>> {
+    +count_tokens(text): int
+    +get_encoding()
+  }
+  class "logging_config" as coreLog <<module>> {
+    +configure_logging(level)
+    +VALID_LOG_LEVELS
+  }
+  interface VectorStoreReader <<Protocol>> {
+    +similarity_search_with_score(query, k): list[tuple[Document, float]]
+  }
+}
+
+main ..> coreLog
+Settings ..> coreCfg : reads env,\nvalidates
+Settings ..> coreVs : defaults
+Settings ..> coreLog : log levels
+RankingConfig ..> coreCfg : validates
+ConversationEngine ..> coreEmb : build_bedrock_embeddings
+vstore ..> coreVs : client, model id,\nmetadata schema
+retriever ..> VectorStoreReader : reads through
+ranking ..> coreMeta : period_end_year,\ncurrent_year
+condensation ..> coreMeta : normalizes\nfields and values
+tokens ..> coreTok
+
+remove @unlinked
+@enduml
