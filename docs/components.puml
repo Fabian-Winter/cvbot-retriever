@@ -14,13 +14,9 @@ rectangle "AWS Account" {
     component "webapp service\n(cvbot-retriever)" as webapp {
       component "__main__\n(--serve)" as main
       component "webapp\n(FastAPI app)" as web
-      component "ratelimit" as ratelimit
-      component "conversation\n(in-memory store)" as conversation
       component "pipeline\n(ConversationEngine)" as pipeline
       component "query_condensation" as condensation
       component "retriever" as retriever
-      component "ranking" as ranking
-      component "prompts / context" as context
       component "llm\n(BedrockLLMClient)" as llm
       component "vector_store" as vstore
     }
@@ -28,7 +24,6 @@ rectangle "AWS Account" {
   }
 
   component "ECR\n(cvbot-webapp)" as ecr
-  database "EFS\n(chroma-data)" as efs
 }
 
 user --> apigw : HTTPS
@@ -37,23 +32,17 @@ vpclink --> cloudmap : webapp (SRV)
 cloudmap --> web : routes to task
 webapp --> cloudmap : resolves\nchroma.cvbot.internal
 cloudmap --> chroma : A record
-chroma --> efs : persists vectors
 ecr --> webapp : container image
 
 gha --> ecr : push image
 gha ..> webapp : register task definition,\nupdate service
 
 main --> web : create_app
-web --> ratelimit : check client
-web --> conversation : load history
 web --> pipeline : answer
 pipeline --> condensation : standalone query,\nboost fields
 pipeline --> retriever : retrieve
-pipeline --> context : build user message,\nfit token budget
 pipeline --> llm : generate
-pipeline --> conversation : save turn
 pipeline --> vstore : open collection
-retriever --> ranking : rerank
 retriever --> vstore : similarity search
 condensation --> llm : generate_json
 

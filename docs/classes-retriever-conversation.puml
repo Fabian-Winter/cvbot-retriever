@@ -12,6 +12,7 @@ InMemoryConversationStore "1" *-- "*" StoreEntry : LRU + idle TTL
 StoreEntry o-- Conversation
 
 ConversationEngine --> ConversationStore
+ConversationEngine ..> InMemoryConversationStore : default store
 ConversationEngine ..> Message : creates user message
 ConversationEngine ..> prompts : build_user_message
 ConversationEngine ..> context : build_context
@@ -20,13 +21,16 @@ context ..> Message : trims history
 context ..> tokens
 tokens ..> Message : count_message_tokens
 
+condensation ..> Message : history + question
+
 BedrockLLMClient ..> Message : to_converse()
 
 webapp ..> ConversationStore : load history
-webapp ..> MessageOut : to_messages_out
+webapp ..> schemas : to_messages_out
+schemas ..> Message : converts
+schemas ..> MessageOut : creates
 ChatResponse o-- "*" MessageOut
 ConversationResponse o-- "*" MessageOut
-MessageOut ..> Message : built from
 
 note bottom of Conversation
   The full history is never truncated.

@@ -18,10 +18,16 @@ browser -> apigw : GET /c/{uuid4}
 apigw -> web
 web -> store : load(conversation_id)
 store --> web : empty Conversation
-web --> browser : chat page (history rendered server side)
+web --> browser : chat page (history embedded\nas escaped Markdown)
+browser -> apigw : GET /static/marked.min.js,\n/static/purify.min.js
+apigw -> web
+web --> browser : vendored scripts
+browser -> browser : render history as sanitized Markdown
 note right of web
   The page does not need the backends:
   the history is read from the store only.
+  API Gateway reaches the webapp via
+  VPC Link and Cloud Map.
 end note
 
 == First question ==
@@ -34,8 +40,6 @@ ref over web, engine
   see sequence-retrieval-api.puml
   (rate limit, condensation, retrieval, generation)
 end ref
-web -> store : load(conversation_id)
-store --> web : 2 turns
 web --> browser : 200 ChatResponse
 browser -> browser : render answer as Markdown\n(sanitized)
 browser --> visitor : answer

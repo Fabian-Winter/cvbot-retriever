@@ -29,7 +29,7 @@ end
 
 == Ask a question ==
 client -> apigw : POST /api/conversations/{id}/messages\n{"question": "..."}
-apigw -> web : forwards request\n(X-Forwarded-For)
+apigw -> web : forwards request via VPC Link\nand Cloud Map (X-Forwarded-For)
 
 alt malformed id or invalid payload
   web --> client : 400 error detail
@@ -43,17 +43,20 @@ end
 limiter --> web : allowed
 
 web -> provider : get()
-opt first request (engine not built yet)
+alt engine already built
+  provider --> web : shared ConversationEngine
+else first request or previous build failed
   provider -> engine : create(settings, store)
-  engine -> chroma : read embedding model id\nand metadata schema of the collection
-  chroma --> engine : model id, schema
-  engine -> engine : build Bedrock embeddings\n(model id from collection),\nopen collection (read only),\ncreate answer + condensation LLM clients
+  engine -> chroma : connect, read embedding model id\nand metadata schema of the collection
+  alt backends reachable
+    chroma --> engine : model id, schema
+    engine -> engine : build Bedrock embeddings\n(model id from collection),\nopen collection (read only),\ncreate answer + condensation LLM clients
+    provider --> web : ConversationEngine (cached)
+  else backends unreachable
+    provider --> web : exception (not cached)
+    web --> client : 503 knowledge base unavailable
+  end
 end
-alt backends unreachable
-  provider --> web : exception (not cached)
-  web --> client : 503 knowledge base unavailable
-end
-provider --> web : ConversationEngine
 
 web -> web : acquire conversation lock\n(timeout 20 s)
 alt lock not acquired
@@ -94,25 +97,27 @@ retriever --> engine : top_k Documents
 engine -> engine : build_user_message(question, chunks)
 engine -> engine : build_context(system prompt, history,\ncurrent message, token budget)\n(drops oldest history turns if needed)
 engine -> llm : generate(context, SYSTEM_PROMPT)
-llm -> bedrock : Converse (read timeout 60 s,\n2 attempts)
+llm -> bedrock : Converse (read timeout 60 s,\nstandard retry mode)
 bedrock --> llm : answer text
 llm --> engine : answer
 
 engine -> store : save(conversation + user turn\n+ assistant turn)
-engine --> web : AnswerResult
-web -> web : release conversation lock
 
-alt vector store error
-  web --> client : 503 knowledge base unavailable
-else Bedrock read timeout
-  web --> client : 504 answer took too long
-else other Bedrock error
-  web --> client : 503 answer service unavailable
-else unexpected error
-  web --> client : 500
-else success
+alt answer succeeded
+  engine --> web : AnswerResult
   web -> store : load(conversation_id)
   store --> web : full visible history
   web --> client : 200 ChatResponse\n(answer + messages)
+else exception raised inside engine.answer
+  alt vector store error (Chroma, HTTP)
+    web --> client : 503 knowledge base unavailable
+  else Bedrock read timeout
+    web --> client : 504 answer took too long
+  else other Bedrock error
+    web --> client : 503 answer service unavailable
+  else unexpected error (for example context over budget)
+    web --> client : 500
+  end
 end
+web -> web : release conversation lock\n(always, in finally)
 @enduml

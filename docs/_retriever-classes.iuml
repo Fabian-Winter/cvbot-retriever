@@ -155,26 +155,29 @@ package "cvbot_retriever" {
     +open_collection(client, collection_name, embeddings): Chroma
   }
 
-  package "schemas" <<module>> {
-    class ChatRequest <<pydantic>> {
-      +question: str
-    }
-    class ChatResponse <<pydantic>> {
-      +conversation_id, answer: str
-      +messages: list[MessageOut]
-    }
-    class ConversationResponse <<pydantic>> {
-      +conversation_id: str
-      +messages: list[MessageOut]
-    }
-    class NewConversationResponse <<pydantic>> {
-      +conversation_id: str
-    }
-    class MessageOut <<pydantic>> {
-      +role, content: str
-    }
-    class ErrorResponse <<pydantic>> {
-      +detail: str
-    }
+  class "schemas" as schemas <<module>> {
+    +MAX_QUESTION_LENGTH: int
+    +to_messages_out(messages): list[MessageOut]
+  }
+
+  class ChatRequest <<pydantic>> {
+    +question: str
+  }
+  class ChatResponse <<pydantic>> {
+    +conversation_id, answer: str
+    +messages: list[MessageOut]
+  }
+  class ConversationResponse <<pydantic>> {
+    +conversation_id: str
+    +messages: list[MessageOut]
+  }
+  class NewConversationResponse <<pydantic>> {
+    +conversation_id: str
+  }
+  class MessageOut <<pydantic>> {
+    +role, content: str
+  }
+  class ErrorResponse <<pydantic>> {
+    +detail: str
   }
 }

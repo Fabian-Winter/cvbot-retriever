@@ -9,6 +9,7 @@ main ..> webapp : create_app
 main ..> ConversationEngine : answers once\n(without --serve)
 
 webapp ..> Settings
+webapp ..> ConversationEngine : default engine_factory
 webapp ..> EngineProvider : creates
 webapp ..> ConversationLocks : creates
 webapp ..> SlidingWindowRateLimiter : creates
@@ -30,6 +31,7 @@ pipeline ..> AnswerResult : returns
 
 ConversationEngine --> Settings
 ConversationEngine --> ConversationStore
+ConversationEngine ..> InMemoryConversationStore : default store
 ConversationEngine ..> AnswerResult : returns
 
 InMemoryConversationStore ..|> ConversationStore
